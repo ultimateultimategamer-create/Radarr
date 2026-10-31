@@ -8,17 +8,16 @@ import translate from 'Utilities/String/translate';
 import MovieFileEditorRow from './MovieFileEditorRow';
 import styles from './MovieFileEditorTableContent.css';
 
+// Files carry the id of their additional version, 0 for the movie's primary version
 function groupFilesByVersion(items, versions) {
   const primary = versions.find((version) => version.isPrimary) ?? versions[0];
 
   return versions.map((version) => {
+    const movieVersionId = version.id === primary.id ? 0 : version.id;
+
     return {
       version,
-      files: items.filter((item) => {
-        const owner = versions.find((v) => v.movieFileId === item.id) ?? primary;
-
-        return owner.id === version.id;
-      })
+      files: items.filter((item) => (item.movieVersionId ?? 0) === movieVersionId)
     };
   });
 }

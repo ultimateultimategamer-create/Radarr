@@ -11,6 +11,7 @@ using NzbDrone.Core.History;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Events;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 
@@ -38,6 +39,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         private readonly IDownloadHistoryService _downloadHistoryService;
         private readonly IRemoteMovieAggregationService _aggregationService;
         private readonly ICustomFormatCalculationService _formatCalculator;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
 
@@ -48,6 +50,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                                       IDownloadHistoryService downloadHistoryService,
                                       IRemoteMovieAggregationService aggregationService,
                                       ICustomFormatCalculationService formatCalculator,
+                                      IMovieVersionService movieVersionService,
                                       IEventAggregator eventAggregator,
                                       ICacheManager cacheManager,
                                       Logger logger)
@@ -57,6 +60,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             _downloadHistoryService = downloadHistoryService;
             _aggregationService = aggregationService;
             _formatCalculator = formatCalculator;
+            _movieVersionService = movieVersionService;
             _eventAggregator = eventAggregator;
             _logger = logger;
 
@@ -177,6 +181,14 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
                 if (trackedDownload.RemoteMovie != null)
                 {
+                    // Releases grabbed for an additional version of the movie are imported into that version
+                    var grabbedHistory = historyItems.FirstOrDefault(v => v.EventType == MovieHistoryEventType.Grabbed);
+
+                    if (grabbedHistory != null && trackedDownload.RemoteMovie.Movie?.Id == grabbedHistory.MovieId)
+                    {
+                        ApplyMovieVersion(trackedDownload, grabbedHistory.GetMovieVersionId());
+                    }
+
                     _aggregationService.Augment(trackedDownload.RemoteMovie);
 
                     // Calculate custom formats
@@ -244,10 +256,27 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         private void UpdateCachedItem(TrackedDownload trackedDownload)
         {
             var parsedMovieInfo = Parser.Parser.ParseMovieTitle(trackedDownload.DownloadItem.Title);
+            var previousMovie = trackedDownload.RemoteMovie?.Movie;
 
             trackedDownload.RemoteMovie = parsedMovieInfo == null ? null : _parsingService.Map(parsedMovieInfo, "", 0, null);
 
+            // Keep importing into the version the release was grabbed for
+            if (previousMovie is { IsVersionView: true } && trackedDownload.RemoteMovie?.Movie?.Id == previousMovie.Id)
+            {
+                ApplyMovieVersion(trackedDownload, previousMovie.MovieVersionId);
+            }
+
             _aggregationService.Augment(trackedDownload.RemoteMovie);
+        }
+
+        private void ApplyMovieVersion(TrackedDownload trackedDownload, int movieVersionId)
+        {
+            if (movieVersionId <= 0 || trackedDownload.RemoteMovie?.Movie == null)
+            {
+                return;
+            }
+
+            trackedDownload.RemoteMovie.Movie = _movieVersionService.GetVersionView(trackedDownload.RemoteMovie.Movie, movieVersionId) ?? trackedDownload.RemoteMovie.Movie;
         }
 
         private static TrackedDownloadState GetStateFromHistory(DownloadHistoryEventType eventType)

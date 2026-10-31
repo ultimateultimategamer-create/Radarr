@@ -174,6 +174,8 @@ namespace NzbDrone.Core.History
                 history.Data.Add("TorrentInfoHash", torrentRelease.InfoHash);
             }
 
+            AddMovieVersionId(history, message.Movie.Movie.MovieVersionId);
+
             _historyRepository.Insert(history);
         }
 
@@ -213,6 +215,8 @@ namespace NzbDrone.Core.History
             history.Data.Add("Size", message.MovieInfo.Size.ToString());
             history.Data.Add("IndexerFlags", message.ImportedMovie.IndexerFlags.ToString());
 
+            AddMovieVersionId(history, movie.MovieVersionId);
+
             _historyRepository.Insert(history);
         }
 
@@ -238,6 +242,8 @@ namespace NzbDrone.Core.History
             history.Data.Add("ReleaseGroup", message.MovieFile.ReleaseGroup);
             history.Data.Add("Size", message.MovieFile.Size.ToString());
             history.Data.Add("IndexerFlags", message.MovieFile.IndexerFlags.ToString());
+
+            AddMovieVersionId(history, message.MovieFile.MovieVersionId);
 
             _historyRepository.Insert(history);
         }
@@ -266,6 +272,8 @@ namespace NzbDrone.Core.History
             history.Data.Add("ReleaseGroup", message.MovieFile.ReleaseGroup);
             history.Data.Add("Size", message.MovieFile.Size.ToString());
             history.Data.Add("IndexerFlags", message.MovieFile.IndexerFlags.ToString());
+
+            AddMovieVersionId(history, message.MovieFile.MovieVersionId);
 
             _historyRepository.Insert(history);
         }
@@ -318,7 +326,25 @@ namespace NzbDrone.Core.History
             history.Data.Add("Size", message.TrackedDownload?.DownloadItem.TotalSize.ToString() ?? message.Data.GetValueOrDefault(MovieHistory.SIZE));
             history.Data.Add("Indexer", message.TrackedDownload?.RemoteMovie?.Release?.Indexer ?? message.Data.GetValueOrDefault(MovieHistory.INDEXER));
 
+            var movieVersionId = message.TrackedDownload?.RemoteMovie?.Movie?.MovieVersionId ?? 0;
+
+            if (movieVersionId == 0 && int.TryParse(message.Data?.GetValueOrDefault(MovieHistory.MOVIE_VERSION_ID), out var grabbedMovieVersionId))
+            {
+                movieVersionId = grabbedMovieVersionId;
+            }
+
+            AddMovieVersionId(history, movieVersionId);
+
             _historyRepository.Insert(history);
+        }
+
+        // Only events for additional versions carry a version, everything else is for the movie's primary version
+        private static void AddMovieVersionId(MovieHistory history, int movieVersionId)
+        {
+            if (movieVersionId > 0)
+            {
+                history.Data[MovieHistory.MOVIE_VERSION_ID] = movieVersionId.ToString();
+            }
         }
 
         public List<MovieHistory> Since(DateTime date, MovieHistoryEventType? eventType)

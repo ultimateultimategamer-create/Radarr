@@ -15,6 +15,9 @@ namespace Radarr.Api.V3.Queue
     public class QueueResource : RestResource
     {
         public int? MovieId { get; set; }
+
+        // The additional version of the movie the download is for, 0 for the movie's primary version
+        public int MovieVersionId { get; set; }
         public MovieResource Movie { get; set; }
         public List<Language> Languages { get; set; }
         public QualityModel Quality { get; set; }
@@ -64,6 +67,7 @@ namespace Radarr.Api.V3.Queue
             {
                 Id = model.Id,
                 MovieId = model.Movie?.Id,
+                MovieVersionId = model.Movie?.MovieVersionId ?? 0,
                 Movie = includeMovie && model.Movie != null ? model.Movie.ToResource(0) : null,
                 Languages = model.Languages,
                 Quality = model.Quality,

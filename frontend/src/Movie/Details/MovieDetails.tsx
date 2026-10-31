@@ -32,7 +32,6 @@ import Tooltip from 'Components/Tooltip/Tooltip';
 import TraktRating from 'Components/TraktRating';
 import useMeasure from 'Helpers/Hooks/useMeasure';
 import usePrevious from 'Helpers/Hooks/usePrevious';
-import useShowAdvancedSettings from 'Helpers/Hooks/useShowAdvancedSettings';
 import {
   icons,
   kinds,
@@ -264,7 +263,6 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
   const [isDeleteMovieModalOpen, setIsDeleteMovieModalOpen] = useState(false);
   const [isMovieHistoryModalOpen, setIsMovieHistoryModalOpen] = useState(false);
   const [isAddVersionModalOpen, setIsAddVersionModalOpen] = useState(false);
-  const showAdvancedSettings = useShowAdvancedSettings();
   const { versions, refetchVersions, removeVersion } =
     useMovieVersions(movieId);
   const [titleRef, { width: titleWidth }] = useMeasure();
@@ -634,13 +632,11 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
             onPress={handleMovieHistoryPress}
           />
 
-          {showAdvancedSettings ? (
-            <PageToolbarButton
-              label={translate('AddVersion')}
-              iconName={icons.ADD}
-              onPress={handleAddVersionPress}
-            />
-          ) : null}
+          <PageToolbarButton
+            label={translate('AddVersion')}
+            iconName={icons.ADD}
+            onPress={handleAddVersionPress}
+          />
 
           <PageToolbarSeparator />
 

@@ -8,8 +8,10 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Languages;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Translations;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
 
@@ -18,6 +20,7 @@ namespace NzbDrone.Core.IndexerSearch
     public interface ISearchForReleases
     {
         Task<List<DownloadDecision>> MovieSearch(int movieId, bool userInvokedSearch, bool interactiveSearch);
+        Task<List<DownloadDecision>> MovieSearch(int movieId, int movieVersionId, bool userInvokedSearch, bool interactiveSearch);
         Task<List<DownloadDecision>> MovieSearch(Movie movie, bool userInvokedSearch, bool interactiveSearch);
     }
 
@@ -28,6 +31,7 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly IMovieService _movieService;
         private readonly IMovieTranslationService _movieTranslationService;
         private readonly IQualityProfileService _qualityProfileService;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly Logger _logger;
 
         public ReleaseSearchService(IIndexerFactory indexerFactory,
@@ -35,6 +39,7 @@ namespace NzbDrone.Core.IndexerSearch
                                 IMovieService movieService,
                                 IMovieTranslationService movieTranslationService,
                                 IQualityProfileService qualityProfileService,
+                                IMovieVersionService movieVersionService,
                                 Logger logger)
         {
             _indexerFactory = indexerFactory;
@@ -42,22 +47,40 @@ namespace NzbDrone.Core.IndexerSearch
             _movieService = movieService;
             _movieTranslationService = movieTranslationService;
             _qualityProfileService = qualityProfileService;
+            _movieVersionService = movieVersionService;
             _logger = logger;
         }
 
         public async Task<List<DownloadDecision>> MovieSearch(int movieId, bool userInvokedSearch, bool interactiveSearch)
         {
+            return await MovieSearch(movieId, 0, userInvokedSearch, interactiveSearch);
+        }
+
+        // A version id limits the search to that version of the movie, otherwise releases are matched against every version
+        public async Task<List<DownloadDecision>> MovieSearch(int movieId, int movieVersionId, bool userInvokedSearch, bool interactiveSearch)
+        {
             var movie = _movieService.GetMovie(movieId);
             movie.MovieMetadata.Value.Translations = _movieTranslationService.GetAllTranslationsForMovieMetadata(movie.MovieMetadataId);
 
-            return await MovieSearch(movie, userInvokedSearch, interactiveSearch);
+            if (movieVersionId > 0)
+            {
+                movie = _movieVersionService.GetVersionView(movie, movieVersionId) ?? movie;
+            }
+
+            return await MovieSearch(movie, userInvokedSearch, interactiveSearch, movieVersionId > 0);
         }
 
         public async Task<List<DownloadDecision>> MovieSearch(Movie movie, bool userInvokedSearch, bool interactiveSearch)
         {
+            return await MovieSearch(movie, userInvokedSearch, interactiveSearch, movie.IsVersionView);
+        }
+
+        private async Task<List<DownloadDecision>> MovieSearch(Movie movie, bool userInvokedSearch, bool interactiveSearch, bool singleMovieVersion)
+        {
             var downloadDecisions = new List<DownloadDecision>();
 
             var searchSpec = Get<MovieSearchCriteria>(movie, userInvokedSearch, interactiveSearch);
+            searchSpec.SingleMovieVersion = singleMovieVersion;
 
             var decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
             downloadDecisions.AddRange(decisions);
@@ -75,7 +98,7 @@ namespace NzbDrone.Core.IndexerSearch
                 InteractiveSearch = interactiveSearch
             };
 
-            var wantedLanguages = _qualityProfileService.GetAcceptableLanguages(movie.QualityProfileId);
+            var wantedLanguages = GetQualityProfileIds(movie).SelectMany(id => _qualityProfileService.GetAcceptableLanguages(id) ?? new List<Language>()).ToList();
             var translations = _movieTranslationService.GetAllTranslationsForMovieMetadata(movie.MovieMetadataId);
 
             var queryTranslations = new List<string>
@@ -141,10 +164,26 @@ namespace NzbDrone.Core.IndexerSearch
             return Array.Empty<ReleaseInfo>();
         }
 
+        // The quality profiles a search is for: the version's own, or those of every version of the movie
+        private List<int> GetQualityProfileIds(Movie movie)
+        {
+            var profileIds = new List<int> { movie.QualityProfileId };
+
+            if (!movie.IsVersionView)
+            {
+                var versions = _movieVersionService.GetByMovieId(movie.Id) ?? new List<MovieVersion>();
+
+                profileIds.AddRange(versions.Select(v => v.QualityProfileId));
+            }
+
+            return profileIds.Distinct().ToList();
+        }
+
         private List<DownloadDecision> DeDupeDecisions(List<DownloadDecision> decisions)
         {
             // De-dupe reports by guid so duplicate results aren't returned. Pick the one with the least rejections and higher indexer priority.
-            return decisions.GroupBy(d => d.RemoteMovie.Release.Guid)
+            // A release can be kept once for each version of the movie it was matched to.
+            return decisions.GroupBy(d => new { d.RemoteMovie.Release.Guid, MovieVersionId = d.RemoteMovie.Movie?.MovieVersionId ?? 0 })
                 .Select(d => d.OrderBy(v => v.Rejections.Count()).ThenBy(v => v.RemoteMovie?.Release?.IndexerPriority ?? IndexerDefinition.DefaultPriority).First())
                 .ToList();
         }

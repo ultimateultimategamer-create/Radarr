@@ -109,12 +109,18 @@ namespace NzbDrone.Core.MediaFiles
                 return;
             }
 
-            var movieFiles = _mediaFileService.GetFilesByMovie(message.Movie.Id).ForVersionOf(message.Movie, _movieVersionService.GetAdditionalVersionIds(message.Movie.Id));
+            // The scan event is published once per movie, it covers the files of every version
+            var movieFiles = _mediaFileService.GetFilesByMovie(message.Movie.Id);
+            var additionalVersionIds = _movieVersionService.GetAdditionalVersionIds(message.Movie.Id)?.ToList() ?? new List<int>();
             var updated = new List<MovieFile>();
 
             foreach (var movieFile in movieFiles)
             {
-                if (ChangeFileDate(movieFile, message.Movie))
+                var movie = movieFile.GetVersionId(additionalVersionIds) == message.Movie.MovieVersionId
+                    ? message.Movie
+                    : _movieVersionService.GetMovieForFile(message.Movie, movieFile) ?? message.Movie;
+
+                if (ChangeFileDate(movieFile, movie))
                 {
                     updated.Add(movieFile);
                 }

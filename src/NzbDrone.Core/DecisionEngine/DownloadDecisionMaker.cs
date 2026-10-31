@@ -9,6 +9,8 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Movies;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 
@@ -26,18 +28,21 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly IParsingService _parsingService;
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IRemoteMovieAggregationService _aggregationService;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly Logger _logger;
 
         public DownloadDecisionMaker(IEnumerable<IDownloadDecisionEngineSpecification> specifications,
                                      IParsingService parsingService,
                                      ICustomFormatCalculationService formatCalculator,
                                      IRemoteMovieAggregationService aggregationService,
+                                     IMovieVersionService movieVersionService,
                                      Logger logger)
         {
             _specifications = specifications;
             _parsingService = parsingService;
             _formatCalculator = formatCalculator;
             _aggregationService = aggregationService;
+            _movieVersionService = movieVersionService;
             _logger = logger;
         }
 
@@ -63,10 +68,11 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             var reportNumber = 1;
+            var versionsByMovie = new Dictionary<int, List<Movie>>();
 
             foreach (var report in reports)
             {
-                DownloadDecision decision = null;
+                var decisions = new List<DownloadDecision>();
                 _logger.ProgressTrace("Processing release {0}/{1}", reportNumber, reports.Count);
                 _logger.Debug("Processing release '{0}' from '{1}'", report.Title, report.Indexer);
 
@@ -82,19 +88,16 @@ namespace NzbDrone.Core.DecisionEngine
 
                         if (remoteMovie.Movie == null)
                         {
-                            decision = new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.UnknownMovie, pushedRelease ? "Unknown Movie. Unable to match to existing movie in Library using release title." : "Unknown Movie. Unable to match to correct movie using release title."));
+                            decisions.Add(new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.UnknownMovie, pushedRelease ? "Unknown Movie. Unable to match to existing movie in Library using release title." : "Unknown Movie. Unable to match to correct movie using release title.")));
                         }
                         else
                         {
                             _aggregationService.Augment(remoteMovie);
 
                             remoteMovie.CustomFormats = _formatCalculator.ParseCustomFormat(remoteMovie, remoteMovie.Release.Size);
-                            remoteMovie.CustomFormatScore = remoteMovie?.Movie?.QualityProfile?.CalculateCustomFormatScore(remoteMovie.CustomFormats) ?? 0;
-
-                            _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", remoteMovie.CustomFormatScore, remoteMovie.CustomFormats?.ConcatToString(), report.Title);
-
                             remoteMovie.DownloadAllowed = remoteMovie.Movie != null;
-                            decision = GetDecisionForReport(remoteMovie, new ReleaseDecisionInformation(pushedRelease, searchCriteria));
+
+                            decisions.AddRange(GetDecisionsForVersions(remoteMovie, new ReleaseDecisionInformation(pushedRelease, searchCriteria), versionsByMovie));
                         }
                     }
 
@@ -119,7 +122,10 @@ namespace NzbDrone.Core.DecisionEngine
                                 Languages = parsedMovieInfo.Languages,
                             };
 
-                            decision = new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.UnableToParse, "Unable to parse release"));
+                            decisions = new List<DownloadDecision>
+                            {
+                                new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.UnableToParse, "Unable to parse release"))
+                            };
                         }
                     }
                 }
@@ -128,16 +134,23 @@ namespace NzbDrone.Core.DecisionEngine
                     _logger.Error(e, "Couldn't process release.");
 
                     var remoteMovie = new RemoteMovie { Release = report, ReleaseSource = GetReleaseSource(pushedRelease, searchCriteria) };
-                    decision = new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.Error, "Unexpected error processing release"));
+                    decisions = new List<DownloadDecision>
+                    {
+                        new DownloadDecision(remoteMovie, new DownloadRejection(DownloadRejectionReason.Error, "Unexpected error processing release"))
+                    };
                 }
 
                 reportNumber++;
 
-                if (decision != null)
+                foreach (var decision in decisions)
                 {
                     if (decision.Rejections.Any())
                     {
                         _logger.Debug("Release '{0}' from '{1}' rejected for the following reasons: {2}", report.Title, report.Indexer, string.Join(", ", decision.Rejections));
+                    }
+                    else if (decision.RemoteMovie.Movie is { IsVersionView: true })
+                    {
+                        _logger.Debug("Release '{0}' from '{1}' accepted for version {2} of the movie", report.Title, report.Indexer, decision.RemoteMovie.Movie.MovieVersionId);
                     }
                     else
                     {
@@ -147,6 +160,61 @@ namespace NzbDrone.Core.DecisionEngine
                     yield return decision;
                 }
             }
+        }
+
+        // A release is evaluated against each version of its movie, as each version has its own quality profile and file.
+        // RSS and automatic searches keep every version that wants the release (or the primary version's rejections when none does),
+        // interactive searches keep a single result per release: the first version that wants it.
+        private List<DownloadDecision> GetDecisionsForVersions(RemoteMovie remoteMovie, ReleaseDecisionInformation information, Dictionary<int, List<Movie>> versionsByMovie)
+        {
+            var decisions = new List<DownloadDecision>();
+
+            foreach (var movie in GetVersionsToEvaluate(remoteMovie.Movie, information.SearchCriteria, versionsByMovie))
+            {
+                var versionRemoteMovie = ReferenceEquals(movie, remoteMovie.Movie) ? remoteMovie : remoteMovie.CloneForMovie(movie);
+
+                versionRemoteMovie.CustomFormatScore = movie.QualityProfile?.CalculateCustomFormatScore(versionRemoteMovie.CustomFormats) ?? 0;
+
+                _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", versionRemoteMovie.CustomFormatScore, versionRemoteMovie.CustomFormats?.ConcatToString(), remoteMovie.Release.Title);
+
+                decisions.Add(GetDecisionForReport(versionRemoteMovie, information));
+            }
+
+            if (decisions.Count <= 1)
+            {
+                return decisions;
+            }
+
+            if (information.SearchCriteria is { InteractiveSearch: true })
+            {
+                return new List<DownloadDecision> { decisions.FirstOrDefault(d => d.Approved) ?? decisions.First() };
+            }
+
+            var qualified = decisions.Where(d => d.Approved || d.TemporarilyRejected).ToList();
+
+            return qualified.Any() ? qualified : new List<DownloadDecision> { decisions.First() };
+        }
+
+        private List<Movie> GetVersionsToEvaluate(Movie movie, SearchCriteriaBase searchCriteria, Dictionary<int, List<Movie>> versionsByMovie)
+        {
+            // The search was for a specific version
+            if (movie.IsVersionView || searchCriteria is { SingleMovieVersion: true })
+            {
+                return new List<Movie> { movie };
+            }
+
+            if (!versionsByMovie.TryGetValue(movie.Id, out var additionalVersions))
+            {
+                var views = _movieVersionService.GetAdditionalVersionViews(movie) ?? Enumerable.Empty<Movie>();
+
+                additionalVersions = views.Where(v => v.QualityProfile != null).ToList();
+                versionsByMovie[movie.Id] = additionalVersions;
+            }
+
+            var movies = new List<Movie> { movie };
+            movies.AddRange(additionalVersions);
+
+            return movies;
         }
 
         private DownloadDecision GetDecisionForReport(RemoteMovie remoteMovie, ReleaseDecisionInformation information)

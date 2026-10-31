@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import ClientSideCollectionAppState from 'App/State/ClientSideCollectionAppState';
 import ReleasesAppState from 'App/State/ReleasesAppState';
@@ -12,6 +12,7 @@ import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { align, icons, kinds, sortDirections } from 'Helpers/Props';
 import { SortDirection } from 'Helpers/Props/sortDirections';
+import useMovieVersions from 'Movie/Details/Versions/useMovieVersions';
 import {
   fetchReleases,
   grabRelease,
@@ -140,6 +141,22 @@ function InteractiveSearch({ searchPayload }: InteractiveSearchProps) {
   );
 
   const dispatch = useDispatch();
+  const { versions } = useMovieVersions(searchPayload.movieId);
+
+  // Without a version to search for, each release is matched to the first version of the movie that wants it
+  const versionQualityProfileIds = useMemo(() => {
+    const result: Record<number, number> = {};
+
+    if (versions.length < 2 || searchPayload.movieVersionId) {
+      return result;
+    }
+
+    versions.forEach((version) => {
+      result[version.isPrimary ? 0 : version.id] = version.qualityProfileId;
+    });
+
+    return result;
+  }, [versions, searchPayload.movieVersionId]);
 
   const handleFilterSelect = useCallback(
     (selectedFilterKey: string | number) => {
@@ -233,6 +250,9 @@ function InteractiveSearch({ searchPayload }: InteractiveSearchProps) {
                 <InteractiveSearchRow
                   key={`${item.indexerId}-${item.guid}`}
                   {...item}
+                  versionQualityProfileId={
+                    versionQualityProfileIds[item.mappedMovieVersionId ?? 0]
+                  }
                   searchPayload={searchPayload}
                   onGrabPress={handleGrabPress}
                 />

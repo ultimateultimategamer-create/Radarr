@@ -245,6 +245,15 @@ namespace NzbDrone.Core.Movies
 
         public Movie UpdateMovie(Movie movie)
         {
+            // A version view carries the path, quality profile and file of one of the movie's additional versions,
+            // saving it would overwrite the movie's own values.
+            if (movie.IsVersionView)
+            {
+                _logger.Debug("Not saving the view of version {0} of {1} as the movie", movie.MovieVersionId, movie);
+
+                return GetMovie(movie.Id);
+            }
+
             var storedMovie = GetMovie(movie.Id);
 
             UpdateTags(movie);

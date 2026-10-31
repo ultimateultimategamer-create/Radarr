@@ -1,0 +1,34 @@
+using Dapper;
+using NzbDrone.Core.Datastore;
+
+namespace NzbDrone.Core.Housekeeping.Housekeepers
+{
+    // Every movie needs a primary version (its oldest MovieVersions row) mirroring the movie itself,
+    // otherwise the first version added to it would silently become the primary version.
+    public class AddMissingPrimaryMovieVersions : IHousekeepingTask
+    {
+        private readonly IMainDatabase _database;
+
+        public AddMissingPrimaryMovieVersions(IMainDatabase database)
+        {
+            _database = database;
+        }
+
+        public void Clean()
+        {
+            using var mapper = _database.OpenConnection();
+
+            mapper.Execute(@"INSERT INTO ""MovieVersions"" (""MovieId"", ""QualityProfileId"", ""Path"", ""MovieFileId"")
+                             SELECT ""Movies"".""Id"", ""Movies"".""QualityProfileId"", ""Movies"".""Path"", ""Movies"".""MovieFileId"" FROM ""Movies""
+                             LEFT OUTER JOIN ""MovieVersions""
+                             ON ""Movies"".""Id"" = ""MovieVersions"".""MovieId""
+                             WHERE ""MovieVersions"".""Id"" IS NULL");
+
+            // Keep the primary version's file in sync with the movie's file
+            mapper.Execute(@"UPDATE ""MovieVersions""
+                             SET ""MovieFileId"" = (SELECT ""Movies"".""MovieFileId"" FROM ""Movies"" WHERE ""Movies"".""Id"" = ""MovieVersions"".""MovieId"")
+                             WHERE ""Id"" IN (SELECT MIN(""Id"") FROM ""MovieVersions"" GROUP BY ""MovieId"")
+                             AND ""MovieFileId"" <> (SELECT ""Movies"".""MovieFileId"" FROM ""Movies"" WHERE ""Movies"".""Id"" = ""MovieVersions"".""MovieId"")");
+        }
+    }
+}

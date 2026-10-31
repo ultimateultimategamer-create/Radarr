@@ -13,6 +13,7 @@ using NzbDrone.Core.Jobs;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Events;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Delay;
@@ -49,6 +50,7 @@ namespace NzbDrone.Core.Download.Pending
         private readonly IRemoteMovieAggregationService _aggregationService;
         private readonly IDownloadClientFactory _downloadClientFactory;
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
 
@@ -63,6 +65,7 @@ namespace NzbDrone.Core.Download.Pending
                                      IRemoteMovieAggregationService aggregationService,
                                      IDownloadClientFactory downloadClientFactory,
                                      IIndexerFactory indexerFactory,
+                                     IMovieVersionService movieVersionService,
                                      IEventAggregator eventAggregator,
                                      Logger logger)
         {
@@ -77,6 +80,7 @@ namespace NzbDrone.Core.Download.Pending
             _aggregationService = aggregationService;
             _downloadClientFactory = downloadClientFactory;
             _indexerFactory = indexerFactory;
+            _movieVersionService = movieVersionService;
             _eventAggregator = eventAggregator;
             _logger = logger;
         }
@@ -99,8 +103,11 @@ namespace NzbDrone.Core.Download.Pending
                     var reason = pair.Item2;
 
                     var existingReports = alreadyPending ?? Enumerable.Empty<PendingRelease>();
+                    var movieVersionId = decision.RemoteMovie.Movie.MovieVersionId;
 
-                    var matchingReports = existingReports.Where(MatchingReleasePredicate(decision.RemoteMovie.Release)).ToList();
+                    var matchingReports = existingReports.Where(MatchingReleasePredicate(decision.RemoteMovie.Release))
+                                                         .Where(p => (p.AdditionalInfo?.MovieVersionId ?? 0) == movieVersionId)
+                                                         .ToList();
 
                     if (matchingReports.Any())
                     {
@@ -199,8 +206,8 @@ namespace NzbDrone.Core.Download.Pending
                 queued.Add(GetQueueItem(pendingRelease, nextRssSync, pendingRelease.RemoteMovie.Movie));
             }
 
-            // Return best quality release for each movie
-            var deduped = queued.Where(q => q.Movie != null).GroupBy(q => q.Movie.Id).Select(g =>
+            // Return best quality release for each movie, and each additional version of a movie
+            var deduped = queued.Where(q => q.Movie != null).GroupBy(q => new { q.Movie.Id, q.Movie.MovieVersionId }).Select(g =>
             {
                 var movies = g.First().Movie;
 
@@ -250,6 +257,7 @@ namespace NzbDrone.Core.Download.Pending
             var result = new List<PendingRelease>();
 
             var movieMap = new Dictionary<int, Movie>();
+            var versionMap = new Dictionary<string, Movie>();
 
             if (knownRemoteMovies != null)
             {
@@ -278,6 +286,21 @@ namespace NzbDrone.Core.Download.Pending
                 if (release.ParsedMovieInfo.Languages.Empty())
                 {
                     release.ParsedMovieInfo.Languages = LanguageParser.ParseLanguages(release.Title);
+                }
+
+                var movieVersionId = release.AdditionalInfo?.MovieVersionId ?? 0;
+
+                if (movieVersionId > 0)
+                {
+                    var versionKey = $"{movie.Id}-{movieVersionId}";
+
+                    if (!versionMap.TryGetValue(versionKey, out var versionMovie))
+                    {
+                        versionMovie = _movieVersionService.GetVersionView(movie, movieVersionId) ?? movie;
+                        versionMap[versionKey] = versionMovie;
+                    }
+
+                    movie = versionMovie;
                 }
 
                 release.RemoteMovie = new RemoteMovie
@@ -363,7 +386,8 @@ namespace NzbDrone.Core.Download.Pending
                 AdditionalInfo = new PendingReleaseAdditionalInfo
                 {
                     MovieMatchType = decision.RemoteMovie.MovieMatchType,
-                    ReleaseSource = decision.RemoteMovie.ReleaseSource
+                    ReleaseSource = decision.RemoteMovie.ReleaseSource,
+                    MovieVersionId = decision.RemoteMovie.Movie.MovieVersionId
                 }
             };
 
@@ -403,7 +427,9 @@ namespace NzbDrone.Core.Download.Pending
         {
             var pendingReleases = GetPendingReleases(remoteMovie.Movie.Id);
 
-            var existingReports = pendingReleases.Where(r => r.RemoteMovie.Movie.Id == remoteMovie.Movie.Id)
+            // Only the pending releases of the version that was grabbed, other versions still want their own release
+            var existingReports = pendingReleases.Where(r => r.RemoteMovie.Movie.Id == remoteMovie.Movie.Id &&
+                                                             r.RemoteMovie.Movie.MovieVersionId == remoteMovie.Movie.MovieVersionId)
                                                              .ToList();
 
             if (existingReports.Empty())

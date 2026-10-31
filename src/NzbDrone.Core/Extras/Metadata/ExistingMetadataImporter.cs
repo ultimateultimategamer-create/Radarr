@@ -5,6 +5,7 @@ using NLog;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.Extras.Subtitles;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser;
 
@@ -14,17 +15,20 @@ namespace NzbDrone.Core.Extras.Metadata
     {
         private readonly IExtraFileService<MetadataFile> _metadataFileService;
         private readonly IParsingService _parsingService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly Logger _logger;
         private readonly List<IMetadata> _consumers;
 
         public ExistingMetadataImporter(IExtraFileService<MetadataFile> metadataFileService,
                                         IEnumerable<IMetadata> consumers,
                                         IParsingService parsingService,
+                                        IMediaFileService mediaFileService,
                                         Logger logger)
         : base(metadataFileService)
         {
             _metadataFileService = metadataFileService;
             _parsingService = parsingService;
+            _mediaFileService = mediaFileService;
             _logger = logger;
             _consumers = consumers.ToList();
         }
@@ -37,6 +41,7 @@ namespace NzbDrone.Core.Extras.Metadata
 
             var metadataFiles = new List<MetadataFile>();
             var filterResult = FilterAndClean(movie, filesOnDisk, importedFiles, fileNameBeforeRename is not null);
+            var movieFiles = _mediaFileService.GetFilesByMovie(movie.Id);
 
             foreach (var possibleMetadataFile in filterResult.FilesOnDisk)
             {
@@ -67,7 +72,7 @@ namespace NzbDrone.Core.Extras.Metadata
                             continue;
                         }
 
-                        metadata.MovieFileId = movie.MovieFileId;
+                        metadata.MovieFileId = ExtraFileMovieFileMatcher.GetMovieFileId(movie, movieFiles, possibleMetadataFile);
                     }
 
                     metadata.Extension = Path.GetExtension(possibleMetadataFile);

@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Extras.Files;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser;
 
@@ -13,15 +14,18 @@ namespace NzbDrone.Core.Extras.Others
     {
         private readonly IExtraFileService<OtherExtraFile> _otherExtraFileService;
         private readonly IParsingService _parsingService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly Logger _logger;
 
         public ExistingOtherExtraImporter(IExtraFileService<OtherExtraFile> otherExtraFileService,
                                           IParsingService parsingService,
+                                          IMediaFileService mediaFileService,
                                           Logger logger)
             : base(otherExtraFileService)
         {
             _otherExtraFileService = otherExtraFileService;
             _parsingService = parsingService;
+            _mediaFileService = mediaFileService;
             _logger = logger;
         }
 
@@ -33,6 +37,7 @@ namespace NzbDrone.Core.Extras.Others
 
             var extraFiles = new List<OtherExtraFile>();
             var filterResult = FilterAndClean(movie, filesOnDisk, importedFiles, fileNameBeforeRename is not null);
+            var movieFiles = _mediaFileService.GetFilesByMovie(movie.Id);
 
             foreach (var possibleExtraFile in filterResult.FilesOnDisk)
             {
@@ -55,7 +60,7 @@ namespace NzbDrone.Core.Extras.Others
                 var extraFile = new OtherExtraFile
                 {
                     MovieId = movie.Id,
-                    MovieFileId = movie.MovieFileId,
+                    MovieFileId = ExtraFileMovieFileMatcher.GetMovieFileId(movie, movieFiles, possibleExtraFile),
                     RelativePath = movie.Path.GetRelativePath(possibleExtraFile),
                     Extension = extension
                 };

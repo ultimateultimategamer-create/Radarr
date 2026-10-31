@@ -19,6 +19,9 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         public virtual bool UserInvokedSearch { get; set; }
         public virtual bool InteractiveSearch { get; set; }
 
+        // Releases are only matched against the searched version of the movie (its primary version included), not against all of them
+        public bool SingleMovieVersion { get; set; }
+
         public List<string> CleanSceneTitles => SceneTitles.Select(GetCleanSceneTitle).Distinct().ToList();
 
         public static string GetCleanSceneTitle(string title)

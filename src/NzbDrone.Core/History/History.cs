@@ -15,6 +15,7 @@ namespace NzbDrone.Core.History
         public const string RELEASE_GROUP = "releaseGroup";
         public const string SIZE = "size";
         public const string INDEXER = "indexer";
+        public const string MOVIE_VERSION_ID = "movieVersionId";
 
         public MovieHistory()
         {
@@ -31,6 +32,12 @@ namespace NzbDrone.Core.History
         public List<Language> Languages { get; set; }
 
         public string DownloadId { get; set; }
+
+        // The additional version of the movie the event was for, 0 for the movie's primary version
+        public int GetMovieVersionId()
+        {
+            return int.TryParse(Data?.GetValueOrDefault(MOVIE_VERSION_ID), out var movieVersionId) ? movieVersionId : 0;
+        }
     }
 
     public enum MovieHistoryEventType

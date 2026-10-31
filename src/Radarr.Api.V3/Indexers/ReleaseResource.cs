@@ -35,6 +35,9 @@ namespace Radarr.Api.V3.Indexers
         public List<string> MovieTitles { get; set; }
         public List<Language> Languages { get; set; }
         public int? MappedMovieId { get; set; }
+
+        // The additional version of the movie the release would be grabbed for, 0 for the movie's primary version
+        public int MappedMovieVersionId { get; set; }
         public bool Approved { get; set; }
         public bool TemporarilyRejected { get; set; }
         public bool Rejected { get; set; }
@@ -60,6 +63,10 @@ namespace Radarr.Api.V3.Indexers
         // Sent when queuing an unknown release
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? MovieId { get; set; }
+
+        // Sent when queuing a release for an additional version of the movie
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? MovieVersionId { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? DownloadClientId { get; set; }
@@ -102,6 +109,7 @@ namespace Radarr.Api.V3.Indexers
                 MovieTitles = parsedMovieInfo.MovieTitles,
                 Languages = remoteMovie.Languages,
                 MappedMovieId = remoteMovie.Movie?.Id,
+                MappedMovieVersionId = remoteMovie.Movie?.MovieVersionId ?? 0,
                 Approved = model.Approved,
                 TemporarilyRejected = model.TemporarilyRejected,
                 Rejected = model.Rejected,

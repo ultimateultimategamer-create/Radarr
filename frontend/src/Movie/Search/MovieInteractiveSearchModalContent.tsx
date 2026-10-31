@@ -17,11 +17,15 @@ import translate from 'Utilities/String/translate';
 
 export interface MovieInteractiveSearchModalContentProps {
   movieId: number;
+
+  // Searches for a single version of the movie, otherwise for all of them
+  movieVersionId?: number;
   onModalClose(): void;
 }
 
 function MovieInteractiveSearchModalContent({
   movieId,
+  movieVersionId,
   onModalClose,
 }: MovieInteractiveSearchModalContentProps) {
   const dispatch = useDispatch();
@@ -48,7 +52,11 @@ function MovieInteractiveSearchModalContent({
       </ModalHeader>
 
       <ModalBody scrollDirection={scrollDirections.BOTH}>
-        <InteractiveSearch searchPayload={{ movieId }} />
+        <InteractiveSearch
+          searchPayload={
+            movieVersionId ? { movieId, movieVersionId } : { movieId }
+          }
+        />
       </ModalBody>
 
       <ModalFooter>

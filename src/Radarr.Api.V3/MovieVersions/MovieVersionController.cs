@@ -47,9 +47,9 @@ namespace Radarr.Api.V3.MovieVersions
         public Results<Created<MovieVersionResource>, NotFound> AddMovieVersion([FromBody] MovieVersionResource resource)
         {
             var movie = _movieService.GetMovie(resource.MovieId);
-            var version = _movieVersionService.AddVersion(movie, resource.QualityProfileId, resource.RootFolderPath);
+            var version = _movieVersionService.AddVersion(movie, resource.QualityProfileId);
 
-            // Pick up files already present in the version's folder
+            // Pick up files already present in the movie's folder that this version wants
             _commandQueueManager.Push(new RescanMovieCommand(movie.Id));
 
             return Created(version.Id);

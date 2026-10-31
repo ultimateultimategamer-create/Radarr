@@ -83,8 +83,13 @@ namespace Radarr.Api.V3.MovieFiles
             }
 
             return TypedResults.Ok(movieFiles.GroupBy(e => e.MovieId)
-                .SelectMany(f => f.ToList()
-                    .ConvertAll(e => e.ToResource(_movieVersionService.GetMovieForFile(_movieService.GetMovie(f.Key), e), _upgradableSpecification, _formatCalculator)))
+                .SelectMany(f =>
+                {
+                    var movie = _movieService.GetMovie(f.Key);
+
+                    return f.ToList()
+                        .ConvertAll(e => e.ToResource(_movieVersionService.GetMovieForFile(movie, e), _upgradableSpecification, _formatCalculator));
+                })
                 .ToList());
         }
 

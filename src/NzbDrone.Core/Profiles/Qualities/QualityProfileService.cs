@@ -9,6 +9,7 @@ using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Collections;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.Profiles.Qualities
@@ -35,6 +36,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         private readonly IMovieService _movieService;
         private readonly IImportListFactory _importListFactory;
         private readonly IMovieCollectionService _collectionService;
+        private readonly IMovieVersionRepository _movieVersionRepository;
         private readonly Logger _logger;
 
         public QualityProfileService(IQualityProfileRepository profileRepository,
@@ -42,6 +44,7 @@ namespace NzbDrone.Core.Profiles.Qualities
                               IMovieService movieService,
                               IImportListFactory importListFactory,
                               IMovieCollectionService collectionService,
+                              IMovieVersionRepository movieVersionRepository,
                               Logger logger)
         {
             _profileRepository = profileRepository;
@@ -49,6 +52,7 @@ namespace NzbDrone.Core.Profiles.Qualities
             _movieService = movieService;
             _importListFactory = importListFactory;
             _collectionService = collectionService;
+            _movieVersionRepository = movieVersionRepository;
             _logger = logger;
         }
 
@@ -64,7 +68,10 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public void Delete(int id)
         {
-            if (_movieService.GetAllMovies().Any(c => c.QualityProfileId == id) || _importListFactory.All().Any(c => c.QualityProfileId == id) || _collectionService.GetAllCollections().Any(c => c.QualityProfileId == id))
+            if (_movieService.GetAllMovies().Any(c => c.QualityProfileId == id) ||
+                _importListFactory.All().Any(c => c.QualityProfileId == id) ||
+                _collectionService.GetAllCollections().Any(c => c.QualityProfileId == id) ||
+                _movieVersionRepository.All().Any(v => v.QualityProfileId == id))
             {
                 throw new QualityProfileInUseException(id);
             }

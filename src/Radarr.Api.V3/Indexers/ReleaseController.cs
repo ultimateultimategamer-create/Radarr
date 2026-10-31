@@ -17,6 +17,7 @@ using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
@@ -36,6 +37,7 @@ namespace Radarr.Api.V3.Indexers
         private readonly IDownloadService _downloadService;
         private readonly IMovieService _movieService;
         private readonly IHistoryService _historyService;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly Logger _logger;
 
         private readonly ICached<RemoteMovie> _remoteMovieCache;
@@ -47,6 +49,7 @@ namespace Radarr.Api.V3.Indexers
                              IDownloadService downloadService,
                              IMovieService movieService,
                              IHistoryService historyService,
+                             IMovieVersionService movieVersionService,
                              ICacheManager cacheManager,
                              IQualityProfileService qualityProfileService,
                              Logger logger)
@@ -59,6 +62,7 @@ namespace Radarr.Api.V3.Indexers
             _downloadService = downloadService;
             _movieService = movieService;
             _historyService = historyService;
+            _movieVersionService = movieVersionService;
             _logger = logger;
 
             PostValidator.RuleFor(s => s.IndexerId).ValidId();
@@ -102,7 +106,7 @@ namespace Radarr.Api.V3.Indexers
                         ReleaseSource = remoteMovie.ReleaseSource
                     };
 
-                    remoteMovie.Movie = _movieService.GetMovie(release.MovieId!.Value);
+                    remoteMovie.Movie = GetMovieForRelease(release.MovieId!.Value, release.MovieVersionId);
                     remoteMovie.ParsedMovieInfo.Quality = release.Quality;
                     remoteMovie.Languages = release.Languages;
                 }
@@ -111,9 +115,7 @@ namespace Radarr.Api.V3.Indexers
                 {
                     if (release.MovieId.HasValue)
                     {
-                        var movie = _movieService.GetMovie(release.MovieId.Value);
-
-                        remoteMovie.Movie = movie;
+                        remoteMovie.Movie = GetMovieForRelease(release.MovieId.Value, release.MovieVersionId);
                     }
                     else
                     {
@@ -134,21 +136,22 @@ namespace Radarr.Api.V3.Indexers
 
         [HttpGet]
         [Produces("application/json")]
-        public async Task<Results<Ok<List<ReleaseResource>>, BadRequest>> GetReleases(int? movieId)
+        public async Task<Results<Ok<List<ReleaseResource>>, BadRequest>> GetReleases(int? movieId, int? movieVersionId)
         {
             if (movieId.HasValue)
             {
-                return TypedResults.Ok(await GetMovieReleases(movieId.Value));
+                return TypedResults.Ok(await GetMovieReleases(movieId.Value, movieVersionId ?? 0));
             }
 
             return TypedResults.Ok(await GetRss());
         }
 
-        private async Task<List<ReleaseResource>> GetMovieReleases(int movieId)
+        // Without a version, each release is offered for the first version of the movie that wants it
+        private async Task<List<ReleaseResource>> GetMovieReleases(int movieId, int movieVersionId)
         {
             try
             {
-                var decisions = await _releaseSearchService.MovieSearch(movieId, true, true);
+                var decisions = await _releaseSearchService.MovieSearch(movieId, movieVersionId, true, true);
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisionsForMovies(decisions);
                 var history = _historyService.FindByMovieId(movieId);
 
@@ -169,9 +172,27 @@ namespace Radarr.Api.V3.Indexers
         {
             var reports = await _rssFetcherAndParser.Fetch();
             var decisions = _downloadDecisionMaker.GetRssDecision(reports);
+
+            // A release wanted by several versions of a movie is listed once
+            decisions = decisions.GroupBy(d => d.RemoteMovie.Release)
+                                 .Select(g => g.FirstOrDefault(d => d.Approved) ?? g.First())
+                                 .ToList();
+
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisionsForMovies(decisions);
 
             return MapDecisions(prioritizedDecisions);
+        }
+
+        private Movie GetMovieForRelease(int movieId, int? movieVersionId)
+        {
+            var movie = _movieService.GetMovie(movieId);
+
+            if (movieVersionId is > 0)
+            {
+                return _movieVersionService.GetVersionView(movie, movieVersionId.Value) ?? movie;
+            }
+
+            return movie;
         }
 
         protected override ReleaseResource MapDecision(DownloadDecision decision, int initialWeight)

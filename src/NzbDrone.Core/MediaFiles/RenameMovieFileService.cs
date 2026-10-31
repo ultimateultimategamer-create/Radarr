@@ -31,6 +31,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMoveMovieFiles _movieFileMover;
         private readonly IEventAggregator _eventAggregator;
         private readonly IBuildFileNames _filenameBuilder;
+        private readonly IMovieVersionFileNameService _movieVersionFileNameService;
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
 
@@ -40,6 +41,7 @@ namespace NzbDrone.Core.MediaFiles
                                       IMoveMovieFiles movieFileMover,
                                       IEventAggregator eventAggregator,
                                       IBuildFileNames filenameBuilder,
+                                      IMovieVersionFileNameService movieVersionFileNameService,
                                       IDiskProvider diskProvider,
                                       Logger logger)
         {
@@ -49,6 +51,7 @@ namespace NzbDrone.Core.MediaFiles
             _movieFileMover = movieFileMover;
             _eventAggregator = eventAggregator;
             _filenameBuilder = filenameBuilder;
+            _movieVersionFileNameService = movieVersionFileNameService;
             _diskProvider = diskProvider;
             _logger = logger;
         }
@@ -58,23 +61,23 @@ namespace NzbDrone.Core.MediaFiles
             var movies = _movieService.GetMovies(movieIds);
             var movieFiles = _mediaFileService.GetFilesByMovies(movieIds).ToLookup(f => f.MovieId);
 
-            return movies.SelectMany(movie =>
-                {
-                    var files = movieFiles[movie.Id].ForVersionOf(movie, _movieVersionService.GetAdditionalVersionIds(movie.Id));
-
-                    return GetPreviews(movie, files);
-                })
-                .ToList();
+            return movies.SelectMany(movie => GetPreviews(movie, movieFiles[movie.Id].ToList()))
+                         .ToList();
         }
 
+        // Covers the files of every version of the movie, each one named with its own version's quality profile
         private IEnumerable<RenameMovieFilePreview> GetPreviews(Movie movie, List<MovieFile> files)
         {
+            var versionViews = GetVersionViews(movie);
+            var additionalVersionIds = versionViews.Where(v => v.IsVersionView).Select(v => v.MovieVersionId).ToList();
+
             foreach (var file in files)
             {
-                var movieFilePath = Path.Combine(movie.Path, file.RelativePath);
+                var fileMovie = GetMovieForFile(versionViews, additionalVersionIds, file);
+                var movieFilePath = Path.Combine(fileMovie.Path, file.RelativePath);
 
-                var newName = _filenameBuilder.BuildFileName(movie, file);
-                var newPath = _filenameBuilder.BuildFilePath(movie, newName, Path.GetExtension(movieFilePath));
+                var newName = BuildFileName(fileMovie, file);
+                var newPath = _filenameBuilder.BuildFilePath(fileMovie, newName, Path.GetExtension(movieFilePath));
 
                 if (!movieFilePath.PathEquals(newPath, StringComparison.Ordinal))
                 {
@@ -84,7 +87,7 @@ namespace NzbDrone.Core.MediaFiles
                         MovieFileId = file.Id,
                         ExistingPath = file.RelativePath,
 
-                        NewPath = movie.Path.GetRelativePath(newPath)
+                        NewPath = fileMovie.Path.GetRelativePath(newPath)
                     };
                 }
             }
@@ -93,19 +96,28 @@ namespace NzbDrone.Core.MediaFiles
         private List<RenamedMovieFile> RenameFiles(List<MovieFile> movieFiles, Movie movie)
         {
             var renamed = new List<RenamedMovieFile>();
+            var versionViews = GetVersionViews(movie);
+            var additionalVersionIds = versionViews.Where(v => v.IsVersionView).Select(v => v.MovieVersionId).ToList();
 
             foreach (var movieFile in movieFiles)
             {
+                var fileMovie = GetMovieForFile(versionViews, additionalVersionIds, movieFile);
                 var previousRelativePath = movieFile.RelativePath;
-                var previousPath = Path.Combine(movie.Path, movieFile.RelativePath);
+                var previousPath = Path.Combine(fileMovie.Path, movieFile.RelativePath);
 
                 try
                 {
                     _logger.Debug("Renaming movie file: {0}", movieFile);
-                    _movieFileMover.MoveMovieFile(movieFile, movie);
+                    _movieFileMover.MoveMovieFile(movieFile, fileMovie);
 
                     _mediaFileService.Update(movieFile);
-                    _movieService.UpdateMovie(movie);
+
+                    // A version view isn't the movie itself, saving it would overwrite the movie with the version's values
+                    if (!fileMovie.IsVersionView)
+                    {
+                        _movieService.UpdateMovie(fileMovie);
+                    }
+
                     renamed.Add(new RenamedMovieFile
                                 {
                                     MovieFile = movieFile,
@@ -115,7 +127,7 @@ namespace NzbDrone.Core.MediaFiles
 
                     _logger.Debug("Renamed movie file: {0}", movieFile);
 
-                    _eventAggregator.PublishEvent(new MovieFileRenamedEvent(movie, movieFile, previousPath));
+                    _eventAggregator.PublishEvent(new MovieFileRenamedEvent(fileMovie, movieFile, previousPath));
                 }
                 catch (FileAlreadyExistsException ex)
                 {
@@ -144,7 +156,7 @@ namespace NzbDrone.Core.MediaFiles
         public void Execute(RenameFilesCommand message)
         {
             var movie = _movieService.GetMovie(message.MovieId);
-            var movieFiles = _mediaFileService.GetMovies(message.Files).ForVersionOf(movie, _movieVersionService.GetAdditionalVersionIds(movie.Id));
+            var movieFiles = _mediaFileService.GetMovies(message.Files).Where(f => f.MovieId == movie.Id).ToList();
 
             _logger.ProgressInfo("Renaming {0} files for {1}", movieFiles.Count, movie.Title);
             var renamedFiles = RenameFiles(movieFiles, movie);
@@ -160,13 +172,36 @@ namespace NzbDrone.Core.MediaFiles
 
             foreach (var movie in moviesToRename)
             {
-                var movieFiles = _mediaFileService.GetFilesByMovie(movie.Id).ForVersionOf(movie, _movieVersionService.GetAdditionalVersionIds(movie.Id));
+                var movieFiles = _mediaFileService.GetFilesByMovie(movie.Id);
                 _logger.ProgressInfo("Renaming movie files for {0}", movie.Title);
                 var renamedFiles = RenameFiles(movieFiles, movie);
                 _logger.ProgressInfo("{0} movie files renamed for {1}", renamedFiles.Count, movie.Title);
             }
 
             _eventAggregator.PublishEvent(new RenameCompletedEvent());
+        }
+
+        // The movie (primary version) followed by a view for each additional version
+        private List<Movie> GetVersionViews(Movie movie)
+        {
+            var views = _movieVersionService.GetAllVersionViews(movie);
+
+            return views == null || views.Empty() ? new List<Movie> { movie } : views;
+        }
+
+        private static Movie GetMovieForFile(List<Movie> versionViews, List<int> additionalVersionIds, MovieFile movieFile)
+        {
+            var versionId = movieFile.GetVersionId(additionalVersionIds);
+
+            return versionViews.FirstOrDefault(v => v.MovieVersionId == versionId) ?? versionViews.First();
+        }
+
+        private string BuildFileName(Movie movie, MovieFile movieFile)
+        {
+            var fileName = _filenameBuilder.BuildFileName(movie, movieFile);
+            var uniqueFileName = _movieVersionFileNameService.GetUniqueFileName(movie, movieFile, fileName);
+
+            return uniqueFileName.IsNullOrWhiteSpace() ? fileName : uniqueFileName;
         }
     }
 }

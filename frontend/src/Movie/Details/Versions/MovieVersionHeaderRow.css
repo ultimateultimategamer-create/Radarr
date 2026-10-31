@@ -18,11 +18,8 @@
   font-weight: bold;
 }
 
-.path {
-  color: var(--helpTextColor);
-  word-break: break-all;
-}
-
-.remove {
+.actions {
+  display: flex;
+  align-items: center;
   margin-left: auto;
 }

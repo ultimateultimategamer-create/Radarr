@@ -1,14 +1,17 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
@@ -33,6 +36,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IConfigService _configService;
+        private readonly IMovieVersionFileNameService _movieVersionFileNameService;
         private readonly Logger _logger;
 
         public MovieFileMovingService(IUpdateMovieFileService updateMovieFileService,
@@ -44,6 +48,7 @@ namespace NzbDrone.Core.MediaFiles
                                 IRootFolderService rootFolderService,
                                 IEventAggregator eventAggregator,
                                 IConfigService configService,
+                                IMovieVersionFileNameService movieVersionFileNameService,
                                 Logger logger)
         {
             _updateMovieFileService = updateMovieFileService;
@@ -55,12 +60,13 @@ namespace NzbDrone.Core.MediaFiles
             _rootFolderService = rootFolderService;
             _eventAggregator = eventAggregator;
             _configService = configService;
+            _movieVersionFileNameService = movieVersionFileNameService;
             _logger = logger;
         }
 
         public MovieFile MoveMovieFile(MovieFile movieFile, Movie movie)
         {
-            var newFileName = _buildFileNames.BuildFileName(movie, movieFile);
+            var newFileName = BuildFileName(movie, movieFile);
             var filePath = _buildFileNames.BuildFilePath(movie, newFileName, Path.GetExtension(movieFile.RelativePath));
 
             EnsureMovieFolder(movieFile, movie, filePath);
@@ -72,7 +78,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public MovieFile MoveMovieFile(MovieFile movieFile, LocalMovie localMovie)
         {
-            var newFileName = _buildFileNames.BuildFileName(localMovie.Movie, movieFile, null, localMovie.CustomFormats);
+            var newFileName = BuildFileName(localMovie.Movie, movieFile, localMovie.CustomFormats);
             var filePath = _buildFileNames.BuildFilePath(localMovie.Movie, newFileName, Path.GetExtension(localMovie.Path));
 
             EnsureMovieFolder(movieFile, localMovie, filePath);
@@ -84,7 +90,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public MovieFile CopyMovieFile(MovieFile movieFile, LocalMovie localMovie)
         {
-            var newFileName = _buildFileNames.BuildFileName(localMovie.Movie, movieFile, null, localMovie.CustomFormats);
+            var newFileName = BuildFileName(localMovie.Movie, movieFile, localMovie.CustomFormats);
             var filePath = _buildFileNames.BuildFilePath(localMovie.Movie, newFileName, Path.GetExtension(localMovie.Path));
 
             EnsureMovieFolder(movieFile, localMovie, filePath);
@@ -97,6 +103,15 @@ namespace NzbDrone.Core.MediaFiles
 
             _logger.Debug("Copying movie file: {0} to {1}", movieFile.Path, filePath);
             return TransferFile(movieFile, localMovie.Movie, filePath, TransferMode.Copy, localMovie);
+        }
+
+        // The versions of a movie share its folder, a file never takes the name of another version's file
+        private string BuildFileName(Movie movie, MovieFile movieFile, List<CustomFormat> customFormats = null)
+        {
+            var fileName = _buildFileNames.BuildFileName(movie, movieFile, null, customFormats);
+            var uniqueFileName = _movieVersionFileNameService.GetUniqueFileName(movie, movieFile, fileName);
+
+            return uniqueFileName.IsNullOrWhiteSpace() ? fileName : uniqueFileName;
         }
 
         private MovieFile TransferFile(MovieFile movieFile, Movie movie, string destinationFilePath, TransferMode mode, LocalMovie localMovie = null)

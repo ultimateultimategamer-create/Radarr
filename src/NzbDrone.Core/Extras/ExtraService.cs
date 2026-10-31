@@ -11,7 +11,6 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
-using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Extras
@@ -29,14 +28,12 @@ namespace NzbDrone.Core.Extras
                                 IHandle<MovieRenamedEvent>
     {
         private readonly IMediaFileService _mediaFileService;
-        private readonly IMovieVersionService _movieVersionService;
         private readonly IMovieService _movieService;
         private readonly IDiskProvider _diskProvider;
         private readonly IConfigService _configService;
         private readonly List<IManageExtraFiles> _extraFileManagers;
 
         public ExtraService(IMediaFileService mediaFileService,
-                            IMovieVersionService movieVersionService,
                             IMovieService movieService,
                             IDiskProvider diskProvider,
                             IConfigService configService,
@@ -44,7 +41,6 @@ namespace NzbDrone.Core.Extras
                             Logger logger)
         {
             _mediaFileService = mediaFileService;
-            _movieVersionService = movieVersionService;
             _movieService = movieService;
             _diskProvider = diskProvider;
             _configService = configService;
@@ -165,14 +161,21 @@ namespace NzbDrone.Core.Extras
             }
         }
 
+        // Every version of a movie lives in its folder, so the extras of each version's file are handled along with the movie
         private List<MovieFile> GetMovieFiles(int movieId)
         {
-            // Extras are only handled for the primary version for now
-            var movieFiles = _mediaFileService.GetFilesByMovie(movieId).ForPrimaryVersion(_movieVersionService.GetAdditionalVersionIds(movieId));
+            var movieFiles = _mediaFileService.GetFilesByMovie(movieId);
+
+            if (!movieFiles.Any())
+            {
+                return movieFiles;
+            }
+
+            var movie = _movieService.GetMovie(movieId);
 
             foreach (var movieFile in movieFiles)
             {
-                movieFile.Movie = _movieService.GetMovie(movieId);
+                movieFile.Movie = movie;
             }
 
             return movieFiles;

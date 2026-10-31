@@ -1,9 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Movies;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
@@ -14,18 +18,21 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         private readonly UpgradableSpecification _upgradableSpecification;
         private readonly ICustomFormatCalculationService _formatService;
         private readonly IConfigService _configService;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly Logger _logger;
 
         public HistorySpecification(IHistoryService historyService,
                                     UpgradableSpecification upgradableSpecification,
                                     ICustomFormatCalculationService formatService,
                                     IConfigService configService,
+                                    IMovieVersionService movieVersionService,
                                     Logger logger)
         {
             _historyService = historyService;
             _upgradableSpecification = upgradableSpecification;
             _formatService = formatService;
             _configService = configService;
+            _movieVersionService = movieVersionService;
             _logger = logger;
         }
 
@@ -46,7 +53,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             _logger.Debug("Performing history status check on report");
 
             _logger.Debug("Checking current status of movie [{0}] in history", subject.Movie.Id);
-            var mostRecent = _historyService.MostRecentForMovie(subject.Movie.Id);
+            var mostRecent = GetMostRecentForVersion(subject.Movie);
 
             if (mostRecent != null && mostRecent.EventType == MovieHistoryEventType.Grabbed)
             {
@@ -113,6 +120,27 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             }
 
             return DownloadSpecDecision.Accept();
+        }
+
+        // Each version of a movie has its own grabs, a grab for another version doesn't block this one
+        private MovieHistory GetMostRecentForVersion(Movie movie)
+        {
+            var additionalVersionIds = _movieVersionService.GetAdditionalVersionIds(movie.Id)?.ToList();
+
+            if (additionalVersionIds == null || additionalVersionIds.Empty())
+            {
+                return _historyService.MostRecentForMovie(movie.Id);
+            }
+
+            return _historyService.FindByMovieId(movie.Id)
+                                  .FirstOrDefault(h => GetVersionId(h, additionalVersionIds) == movie.MovieVersionId);
+        }
+
+        private static int GetVersionId(MovieHistory history, List<int> additionalVersionIds)
+        {
+            var movieVersionId = history.GetMovieVersionId();
+
+            return additionalVersionIds.Contains(movieVersionId) ? movieVersionId : 0;
         }
     }
 }

@@ -52,7 +52,7 @@ function SelectMovieVersionModalContent({
       return {
         key: getMovieVersionKey(version),
         value: profile?.name ?? translate('Unknown'),
-        hint: version.path,
+        hint: version.isPrimary ? translate('PrimaryVersion') : undefined,
       };
     });
   }, [movieVersions, qualityProfiles]);

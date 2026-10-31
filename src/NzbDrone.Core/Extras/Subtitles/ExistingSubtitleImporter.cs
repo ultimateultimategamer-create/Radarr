@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Extras.Files;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.MovieImport.Aggregation;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Parser;
@@ -16,17 +17,20 @@ namespace NzbDrone.Core.Extras.Subtitles
         private readonly IExtraFileService<SubtitleFile> _subtitleFileService;
         private readonly IAggregationService _aggregationService;
         private readonly IParsingService _parsingService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly Logger _logger;
 
         public ExistingSubtitleImporter(IExtraFileService<SubtitleFile> subtitleFileService,
                                         IAggregationService aggregationService,
                                         IParsingService parsingService,
+                                        IMediaFileService mediaFileService,
                                         Logger logger)
             : base(subtitleFileService)
         {
             _subtitleFileService = subtitleFileService;
             _aggregationService = aggregationService;
             _parsingService = parsingService;
+            _mediaFileService = mediaFileService;
             _logger = logger;
         }
 
@@ -38,6 +42,7 @@ namespace NzbDrone.Core.Extras.Subtitles
 
             var subtitleFiles = new List<SubtitleFile>();
             var filterResult = FilterAndClean(movie, filesOnDisk, importedFiles, fileNameBeforeRename is not null);
+            var movieFiles = _mediaFileService.GetFilesByMovie(movie.Id);
 
             foreach (var possibleSubtitleFile in filterResult.FilesOnDisk)
             {
@@ -74,7 +79,7 @@ namespace NzbDrone.Core.Extras.Subtitles
                     var subtitleFile = new SubtitleFile
                     {
                         MovieId = movie.Id,
-                        MovieFileId = movie.MovieFileId,
+                        MovieFileId = ExtraFileMovieFileMatcher.GetMovieFileId(movie, movieFiles, possibleSubtitleFile),
                         RelativePath = movie.Path.GetRelativePath(possibleSubtitleFile),
                         Language = localMovie.SubtitleInfo.Language,
                         LanguageTags = localMovie.SubtitleInfo.LanguageTags,

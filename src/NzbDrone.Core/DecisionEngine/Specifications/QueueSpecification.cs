@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -37,9 +38,22 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         public DownloadSpecDecision IsSatisfiedBy(RemoteMovie subject, ReleaseDecisionInformation information)
         {
             var queue = _queueService.GetQueue();
-            var matchingMovies = queue.Where(q => q.RemoteMovie?.Movie != null &&
-                                                   q.RemoteMovie.Movie.Id == subject.Movie.Id)
-                                       .ToList();
+            var queuedForMovie = queue.Where(q => q.RemoteMovie?.Movie != null &&
+                                                  q.RemoteMovie.Movie.Id == subject.Movie.Id)
+                                      .ToList();
+
+            // The same release already downloading for another version of the movie would only give a second copy of the same file
+            var sameReleaseForOtherVersion = queuedForMovie.FirstOrDefault(q => q.RemoteMovie.Movie.MovieVersionId != subject.Movie.MovieVersionId &&
+                                                                                IsSameRelease(q, subject));
+
+            if (sameReleaseForOtherVersion != null)
+            {
+                return DownloadSpecDecision.Reject(DownloadRejectionReason.QueueSameReleaseOtherVersion, "Release is already in queue for another version of the movie");
+            }
+
+            // Each version of a movie only competes with its own downloads
+            var matchingMovies = queuedForMovie.Where(q => q.RemoteMovie.Movie.MovieVersionId == subject.Movie.MovieVersionId)
+                                               .ToList();
 
             foreach (var queueItem in matchingMovies)
             {
@@ -111,6 +125,19 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             }
 
             return DownloadSpecDecision.Accept();
+        }
+
+        private static bool IsSameRelease(Queue.Queue queueItem, RemoteMovie subject)
+        {
+            var title = subject.Release?.Title;
+
+            if (title.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            return title.Equals(queueItem.Title, StringComparison.InvariantCultureIgnoreCase) ||
+                   title.Equals(queueItem.RemoteMovie.Release?.Title, StringComparison.InvariantCultureIgnoreCase);
         }
     }
 }

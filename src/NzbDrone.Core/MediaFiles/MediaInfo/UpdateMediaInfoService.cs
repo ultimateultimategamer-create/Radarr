@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NLog;
@@ -49,14 +50,26 @@ namespace NzbDrone.Core.MediaFiles.MediaInfo
                 return;
             }
 
-            var allMediaFiles = _mediaFileService.GetFilesByMovie(message.Movie.Id).ForVersionOf(message.Movie, _movieVersionService.GetAdditionalVersionIds(message.Movie.Id));
+            // The scan event is published once per movie, it covers the files of every version
+            var allMediaFiles = _mediaFileService.GetFilesByMovie(message.Movie.Id);
             var filteredMediaFiles = allMediaFiles.Where(c =>
                 c.MediaInfo == null ||
                 c.MediaInfo.SchemaRevision < VideoFileInfoReader.MINIMUM_MEDIA_INFO_SCHEMA_REVISION).ToList();
 
+            if (filteredMediaFiles.Empty())
+            {
+                return;
+            }
+
+            var additionalVersionIds = _movieVersionService.GetAdditionalVersionIds(message.Movie.Id)?.ToList() ?? new List<int>();
+
             foreach (var mediaFile in filteredMediaFiles)
             {
-                UpdateMediaInfo(mediaFile, message.Movie);
+                var movie = mediaFile.GetVersionId(additionalVersionIds) == message.Movie.MovieVersionId
+                    ? message.Movie
+                    : _movieVersionService.GetMovieForFile(message.Movie, mediaFile) ?? message.Movie;
+
+                UpdateMediaInfo(mediaFile, movie);
             }
         }
 

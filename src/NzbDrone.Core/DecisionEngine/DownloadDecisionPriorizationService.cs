@@ -26,8 +26,9 @@ namespace NzbDrone.Core.DecisionEngine
 
         public List<DownloadDecision> PrioritizeDecisionsForMovies(List<DownloadDecision> decisions)
         {
+            // Versions of a movie have their own quality profile, their releases are compared with each other separately
             return decisions.Where(c => c.RemoteMovie.Movie != null)
-                            .GroupBy(c => c.RemoteMovie.Movie.Id, (movieId, downloadDecisions) =>
+                            .GroupBy(c => new { c.RemoteMovie.Movie.Id, c.RemoteMovie.Movie.MovieVersionId }, (movieKey, downloadDecisions) =>
                             {
                                 return downloadDecisions.OrderByDescending(decision => decision, new DownloadDecisionComparer(_configService, _delayProfileService, _qualityDefinitionService));
                             })

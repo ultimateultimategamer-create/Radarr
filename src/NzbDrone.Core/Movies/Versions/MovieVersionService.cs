@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net;
 using NLog;
@@ -16,17 +15,20 @@ namespace NzbDrone.Core.Movies.Versions
     public interface IMovieVersionService
     {
         MovieVersion Get(int id);
+        MovieVersion Find(int id);
         List<MovieVersion> GetByMovieId(int movieId);
         List<MovieVersion> GetByMovieIds(List<int> movieIds);
+        List<MovieVersion> GetAllAdditionalVersions();
         MovieVersion FindByPath(string path);
         MovieVersion GetPrimary(int movieId);
         IEnumerable<Movie> GetAdditionalVersionViews(Movie movie);
+        List<Movie> GetAllVersionViews(Movie movie);
         IEnumerable<int> GetAdditionalVersionIds(int movieId);
         IEnumerable<int> GetVersionIdsWithPath(int movieId, string path);
         Movie GetMovieForFile(Movie movie, MovieFile movieFile);
         Movie GetVersionView(Movie movie, int movieVersionId);
         MovieVersion Add(MovieVersion version);
-        MovieVersion AddVersion(Movie movie, int qualityProfileId, string rootFolderPath);
+        MovieVersion AddVersion(Movie movie, int qualityProfileId);
         void RemoveVersion(int id);
         MovieVersion Update(MovieVersion version);
         void Delete(int id);
@@ -34,6 +36,7 @@ namespace NzbDrone.Core.Movies.Versions
 
     public class MovieVersionService : IMovieVersionService,
                                        IHandle<MovieAddedEvent>,
+                                       IHandle<MoviesImportedEvent>,
                                        IHandle<MovieEditedEvent>,
                                        IHandle<MoviesBulkEditedEvent>,
                                        IHandle<MovieMovedEvent>,
@@ -65,6 +68,11 @@ namespace NzbDrone.Core.Movies.Versions
             return _repository.Get(id);
         }
 
+        public MovieVersion Find(int id)
+        {
+            return _repository.Find(id);
+        }
+
         public List<MovieVersion> GetByMovieId(int movieId)
         {
             return _repository.FindByMovieId(movieId);
@@ -73,6 +81,15 @@ namespace NzbDrone.Core.Movies.Versions
         public List<MovieVersion> GetByMovieIds(List<int> movieIds)
         {
             return _repository.FindByMovieIds(movieIds);
+        }
+
+        // Every version that isn't the primary version of its movie
+        public List<MovieVersion> GetAllAdditionalVersions()
+        {
+            return _repository.All()
+                              .GroupBy(v => v.MovieId)
+                              .SelectMany(g => g.OrderBy(v => v.Id).Skip(1))
+                              .ToList();
         }
 
         public MovieVersion FindByPath(string path)
@@ -89,6 +106,17 @@ namespace NzbDrone.Core.Movies.Versions
         public IEnumerable<Movie> GetAdditionalVersionViews(Movie movie)
         {
             return GetAdditionalVersions(movie.Id).Select(v => BuildView(movie, v)).ToList();
+        }
+
+        // The movie itself (primary version) followed by a view for each of its additional versions
+        public List<Movie> GetAllVersionViews(Movie movie)
+        {
+            var baseMovie = movie.IsVersionView ? _movieRepository.Get(movie.Id) : movie;
+
+            var views = new List<Movie> { baseMovie };
+            views.AddRange(GetAdditionalVersionViews(baseMovie));
+
+            return views;
         }
 
         public IEnumerable<int> GetAdditionalVersionIds(int movieId)
@@ -115,19 +143,31 @@ namespace NzbDrone.Core.Movies.Versions
                 return movie;
             }
 
-            if (versionId == 0)
-            {
-                return _movieRepository.Get(movie.Id);
-            }
-
-            var version = _repository.Get(versionId);
-
-            return BuildView(movie, version);
+            return GetVersionView(movie, versionId);
         }
 
+        // The view of an additional version of the movie, or the movie itself for its primary version.
+        // Unknown versions (removed, belonging to another movie or the primary version's own id) fall back to the movie.
         public Movie GetVersionView(Movie movie, int movieVersionId)
         {
-            return BuildView(movie, _repository.Get(movieVersionId));
+            if (movie == null)
+            {
+                return null;
+            }
+
+            if (movie.IsVersionView && movie.MovieVersionId == movieVersionId)
+            {
+                return movie;
+            }
+
+            var version = movieVersionId > 0 ? _repository.Find(movieVersionId) : null;
+
+            if (version == null || version.MovieId != movie.Id || !GetAdditionalVersionIds(movie.Id).Contains(version.Id))
+            {
+                return movie.IsVersionView ? _movieRepository.Get(movie.Id) : movie;
+            }
+
+            return BuildView(movie, version);
         }
 
         public MovieVersion Add(MovieVersion version)
@@ -135,32 +175,29 @@ namespace NzbDrone.Core.Movies.Versions
             return _repository.Insert(version);
         }
 
-        // Without a root folder the version shares the movie's folder, otherwise it uses the movie's folder name in that root folder
-        public MovieVersion AddVersion(Movie movie, int qualityProfileId, string rootFolderPath)
+        // Every version is stored in the movie's own folder, next to the files of the other versions
+        public MovieVersion AddVersion(Movie movie, int qualityProfileId)
         {
-            if (_qualityProfileRepository.Get(qualityProfileId) == null)
+            if (_qualityProfileRepository.Find(qualityProfileId) == null)
             {
                 throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Quality profile {0} does not exist", qualityProfileId);
             }
 
-            var path = rootFolderPath.IsNullOrWhiteSpace()
-                ? movie.Path
-                : Path.Combine(rootFolderPath, new DirectoryInfo(movie.Path).Name);
+            // Movies added in bulk before versions existed may not have their primary version yet
+            var existing = EnsurePrimary(movie);
 
-            var existing = _repository.FindByMovieId(movie.Id);
-
-            if (existing.Any(v => v.QualityProfileId == qualityProfileId && v.Path.PathEquals(path)))
+            if (existing.Any(v => v.QualityProfileId == qualityProfileId))
             {
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "{0} already has a version with this quality profile in {1}", movie.Title, path);
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "{0} already has a version with this quality profile", movie.Title);
             }
 
-            _logger.Info("Adding version of {0} with quality profile {1} in {2}", movie, qualityProfileId, path);
+            _logger.Info("Adding version of {0} with quality profile {1}", movie, qualityProfileId);
 
             return _repository.Insert(new MovieVersion
             {
                 MovieId = movie.Id,
                 QualityProfileId = qualityProfileId,
-                Path = path
+                Path = movie.Path
             });
         }
 
@@ -195,40 +232,50 @@ namespace NzbDrone.Core.Movies.Versions
 
         public void Handle(MovieAddedEvent message)
         {
-            var movie = message.Movie;
+            EnsurePrimary(message.Movie);
+        }
 
-            if (_repository.FindByMovieId(movie.Id).Any())
+        // Import lists, collections and the library import add movies in bulk without a MovieAddedEvent
+        public void Handle(MoviesImportedEvent message)
+        {
+            var movies = message.Movies?.Where(m => m != null && m.Id > 0).ToList() ?? new List<Movie>();
+
+            if (movies.Empty())
             {
                 return;
             }
 
-            _logger.Debug("Creating primary version for {0}", movie);
+            var withVersions = _repository.FindByMovieIds(movies.Select(m => m.Id).ToList())
+                                          .Select(v => v.MovieId)
+                                          .ToHashSet();
 
-            _repository.Insert(new MovieVersion
+            var primaries = movies.Where(m => !withVersions.Contains(m.Id))
+                                  .Select(CreatePrimary)
+                                  .ToList();
+
+            if (primaries.Any())
             {
-                MovieId = movie.Id,
-                QualityProfileId = movie.QualityProfileId,
-                Path = movie.Path,
-                MovieFileId = movie.MovieFileId
-            });
+                _logger.Debug("Creating primary versions for {0} imported movies", primaries.Count);
+                _repository.InsertMany(primaries);
+            }
         }
 
         public void Handle(MovieEditedEvent message)
         {
-            SyncPrimary(message.Movie);
+            SyncVersions(message.Movie);
         }
 
         public void Handle(MoviesBulkEditedEvent message)
         {
             foreach (var movie in message.Movies)
             {
-                SyncPrimary(movie);
+                SyncVersions(movie);
             }
         }
 
         public void Handle(MovieMovedEvent message)
         {
-            SyncPrimary(message.Movie);
+            SyncVersions(message.Movie);
         }
 
         public void Handle(MovieFileAddedEvent message)
@@ -236,10 +283,10 @@ namespace NzbDrone.Core.Movies.Versions
             var movieFile = message.MovieFile;
 
             var version = movieFile.MovieVersionId > 0
-                ? _repository.Get(movieFile.MovieVersionId)
+                ? _repository.Find(movieFile.MovieVersionId)
                 : GetPrimary(movieFile.MovieId);
 
-            if (version == null)
+            if (version == null || version.MovieId != movieFile.MovieId)
             {
                 return;
             }
@@ -276,38 +323,87 @@ namespace NzbDrone.Core.Movies.Versions
         {
             var view = movie.ForVersion(version);
 
-            view.QualityProfile = _qualityProfileRepository.Get(version.QualityProfileId);
+            // Versions share the movie's folder, a missing path never points somewhere else
+            if (view.Path.IsNullOrWhiteSpace())
+            {
+                view.Path = movie.Path;
+            }
+
+            view.QualityProfile = _qualityProfileRepository.Find(version.QualityProfileId);
 
             if (version.MovieFileId > 0)
             {
-                view.MovieFile = _mediaFileRepository.Get(version.MovieFileId);
+                view.MovieFile = _mediaFileRepository.Find(version.MovieFileId);
             }
 
             return view;
         }
 
-        private void SyncPrimary(Movie movie)
+        private List<MovieVersion> EnsurePrimary(Movie movie)
+        {
+            var versions = _repository.FindByMovieId(movie.Id);
+
+            if (versions.Any())
+            {
+                return versions;
+            }
+
+            _logger.Debug("Creating primary version for {0}", movie);
+
+            versions.Add(_repository.Insert(CreatePrimary(movie)));
+
+            return versions;
+        }
+
+        private static MovieVersion CreatePrimary(Movie movie)
+        {
+            return new MovieVersion
+            {
+                MovieId = movie.Id,
+                QualityProfileId = movie.QualityProfileId,
+                Path = movie.Path,
+                MovieFileId = movie.MovieFileId
+            };
+        }
+
+        // Keeps the primary version in sync with the movie, every version lives in the movie's folder and follows it when it moves
+        private void SyncVersions(Movie movie)
         {
             if (movie == null || movie.IsVersionView)
             {
                 return;
             }
 
-            var primary = GetPrimary(movie.Id);
+            var versions = _repository.FindByMovieId(movie.Id).OrderBy(v => v.Id).ToList();
 
-            if (primary == null)
+            if (versions.Empty())
             {
                 return;
             }
 
-            if (primary.Path == movie.Path && primary.QualityProfileId == movie.QualityProfileId)
+            var updated = new List<MovieVersion>();
+            var primary = versions.First();
+
+            if (primary.Path != movie.Path || primary.QualityProfileId != movie.QualityProfileId)
             {
-                return;
+                primary.Path = movie.Path;
+                primary.QualityProfileId = movie.QualityProfileId;
+                updated.Add(primary);
             }
 
-            primary.Path = movie.Path;
-            primary.QualityProfileId = movie.QualityProfileId;
-            _repository.Update(primary);
+            foreach (var version in versions.Skip(1))
+            {
+                if (version.Path != movie.Path)
+                {
+                    version.Path = movie.Path;
+                    updated.Add(version);
+                }
+            }
+
+            if (updated.Any())
+            {
+                _repository.UpdateMany(updated);
+            }
         }
     }
 }

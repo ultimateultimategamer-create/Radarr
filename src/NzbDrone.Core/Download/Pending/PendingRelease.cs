@@ -22,5 +22,8 @@ namespace NzbDrone.Core.Download.Pending
     {
         public MovieMatchType MovieMatchType { get; set; }
         public ReleaseSourceType ReleaseSource { get; set; }
+
+        // The additional version of the movie the release is pending for, 0 for the movie's primary version
+        public int MovieVersionId { get; set; }
     }
 }

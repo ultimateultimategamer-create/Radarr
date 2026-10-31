@@ -13,9 +13,6 @@ namespace Radarr.Api.V3.MovieVersions
         public int MovieFileId { get; set; }
         public bool HasFile { get; set; }
         public bool IsPrimary { get; set; }
-
-        // Only used when adding a version: empty to share the movie's folder
-        public string RootFolderPath { get; set; }
     }
 
     public static class MovieVersionResourceMapper

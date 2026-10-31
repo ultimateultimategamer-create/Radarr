@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import ProtocolLabel from 'Activity/Queue/ProtocolLabel';
 import Icon from 'Components/Icon';
+import Label from 'Components/Label';
 import Link from 'Components/Link/Link';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -13,6 +14,7 @@ import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import MovieFormats from 'Movie/MovieFormats';
 import MovieLanguages from 'Movie/MovieLanguages';
 import MovieQuality from 'Movie/MovieQuality';
+import QualityProfileName from 'Settings/Profiles/Quality/QualityProfileName';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import Release from 'typings/Release';
 import formatDateTime from 'Utilities/Date/formatDateTime';
@@ -70,6 +72,7 @@ function getDownloadTooltip(
 }
 
 interface InteractiveSearchRowProps extends Release {
+  versionQualityProfileId?: number;
   searchPayload: InteractiveSearchPayload;
   onGrabPress(...args: unknown[]): void;
 }
@@ -101,6 +104,7 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     isGrabbing = false,
     isGrabbed = false,
     grabError,
+    versionQualityProfileId,
     searchPayload,
     onGrabPress,
   } = props;
@@ -181,6 +185,15 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
           <Link to={infoUrl} title={title}>
             {title}
           </Link>
+
+          {versionQualityProfileId ? (
+            <Label
+              kind={kinds.INFO}
+              title={translate('MovieVersionReleaseTooltip')}
+            >
+              <QualityProfileName qualityProfileId={versionQualityProfileId} />
+            </Label>
+          ) : null}
         </div>
       </TableRowCell>
 

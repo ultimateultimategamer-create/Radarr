@@ -58,6 +58,12 @@ namespace NzbDrone.Core.Download
                     continue;
                 }
 
+                // The same release isn't downloaded again for another version of the movie
+                if (IsReleaseProcessed(grabbed, report))
+                {
+                    continue;
+                }
+
                 if (report.TemporarilyRejected)
                 {
                     PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.Delay);
@@ -164,14 +170,25 @@ namespace NzbDrone.Core.Download
             return (decision.Approved || decision.TemporarilyRejected) && decision.RemoteMovie.Movie != null;
         }
 
+        // Each version of a movie gets its own download
         private bool IsMovieProcessed(List<DownloadDecision> decisions, DownloadDecision report)
         {
-            var movieId = report.RemoteMovie.Movie.Id;
+            var movie = report.RemoteMovie.Movie;
 
             return decisions.Select(r => r.RemoteMovie.Movie)
-                            .Select(e => e.Id)
-                            .ToList()
-                            .Contains(movieId);
+                            .Any(e => e.Id == movie.Id && e.MovieVersionId == movie.MovieVersionId);
+        }
+
+        private bool IsReleaseProcessed(List<DownloadDecision> decisions, DownloadDecision report)
+        {
+            var movie = report.RemoteMovie.Movie;
+            var release = report.RemoteMovie.Release;
+
+            return decisions.Where(d => d.RemoteMovie.Movie.Id == movie.Id)
+                            .Select(d => d.RemoteMovie.Release)
+                            .Any(r => ReferenceEquals(r, release) ||
+                                      (r.Guid == release.Guid && r.IndexerId == release.IndexerId) ||
+                                      string.Equals(r.Title, release.Title, StringComparison.InvariantCultureIgnoreCase));
         }
 
         private void PreparePending(List<Tuple<DownloadDecision, PendingReleaseReason>> queue, List<DownloadDecision> grabbed, List<DownloadDecision> pending, DownloadDecision report, PendingReleaseReason reason)
