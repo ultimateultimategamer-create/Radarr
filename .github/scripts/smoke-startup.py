@@ -14,8 +14,34 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 
+def find_assembly(path):
+    """Accepts the app's dll or a build output folder. On Linux and macOS the console app is built as
+    Radarr.dll inside a runtime folder (for example _output/net10.0/linux-x64), on Windows as Radarr.Console.dll."""
+    path = Path(path)
+
+    if path.is_file():
+        return path.resolve()
+
+    candidates = [
+        candidate for name in ("Radarr.Console.dll", "Radarr.dll")
+        for candidate in sorted(path.rglob(name))
+        if "Radarr.Update" not in candidate.parts and "publish" not in candidate.parts
+    ]
+
+    if not candidates:
+        raise FileNotFoundError(f"Could not find Radarr.Console.dll or Radarr.dll under {path}")
+
+    return candidates[0].resolve()
+
+
+def annotate_failure(title, text):
+    escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::error title={title}::{escaped}")
+
+
 def smoke_startup(assembly, dotnet, timeout):
-    assembly = Path(assembly).resolve(strict=True)
+    assembly = find_assembly(assembly)
+    print(f"Starting {assembly}")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -81,10 +107,12 @@ def smoke_startup(assembly, dotnet, timeout):
                     raise RuntimeError("Radarr stopped immediately after becoming ready")
                 get_json("system/status")
                 print("Startup smoke test passed: status and movie-version APIs are responsive.")
-            except BaseException:
+            except BaseException as error:
                 output.flush()
                 output.seek(0)
-                print(output.read()[-20000:])
+                log = output.read()[-20000:]
+                print(log)
+                annotate_failure("Radarr startup failed", f"{error}\n{log[-12000:]}")
                 raise
             finally:
                 if process.poll() is None:
@@ -98,8 +126,13 @@ def smoke_startup(assembly, dotnet, timeout):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("assembly", help="Path to the built Radarr.Console.dll")
+    parser.add_argument("assembly", help="Path to the built Radarr.Console.dll/Radarr.dll, or the build output folder")
     parser.add_argument("--dotnet", default="dotnet")
     parser.add_argument("--timeout", type=float, default=90)
     args = parser.parse_args()
-    smoke_startup(args.assembly, args.dotnet, args.timeout)
+
+    try:
+        smoke_startup(args.assembly, args.dotnet, args.timeout)
+    except FileNotFoundError as error:
+        annotate_failure("Startup smoke test failed", str(error))
+        raise

@@ -32,7 +32,7 @@ jobs:
         run: dotnet build src/Radarr.sln -c Release -p:Platform=Posix
 
       - name: Release startup smoke test
-        run: python3 .github/scripts/smoke-startup.py _output/net10.0/Radarr.Console.dll
+        run: python3 .github/scripts/smoke-startup.py _output/net10.0
 
       - name: Unit tests
         id: tests
@@ -54,7 +54,7 @@ jobs:
         run: dotnet build src/Radarr.sln -c Debug -p:Platform=Posix
 
       - name: Debug startup smoke test
-        run: python3 .github/scripts/smoke-startup.py _output/net10.0/Radarr.Console.dll
+        run: python3 .github/scripts/smoke-startup.py _output/net10.0
 
       - name: Debug version and container regression tests
         id: debug_tests
