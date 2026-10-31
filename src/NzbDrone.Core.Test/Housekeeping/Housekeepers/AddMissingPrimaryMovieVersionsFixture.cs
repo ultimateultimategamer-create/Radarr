@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
             var version = AllStoredModels.Single();
 
             version.MovieId.Should().Be(movie.Id);
+            version.Name.Should().Be("Original");
             version.QualityProfileId.Should().Be(3);
             version.Path.Should().Be("/Movies/Movie (2020)");
             version.MovieFileId.Should().Be(12);
@@ -49,6 +50,22 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
             Subject.Clean();
 
             AllStoredModels.Should().HaveCount(1);
+        }
+
+        [Test]
+        public void should_repair_blank_primary_names_without_renaming_other_versions()
+        {
+            var movie = Builder<Movie>.CreateNew().BuildNew();
+            Db.Insert(movie);
+            var primary = new MovieVersion { MovieId = movie.Id, Name = "", QualityProfileId = movie.QualityProfileId };
+            var additional = new MovieVersion { MovieId = movie.Id, Name = "Director's Cut", QualityProfileId = movie.QualityProfileId };
+            Db.Insert(primary);
+            Db.Insert(additional);
+
+            Subject.Clean();
+
+            AllStoredModels.Single(v => v.Id == primary.Id).Name.Should().Be("Original");
+            AllStoredModels.Single(v => v.Id == additional.Id).Name.Should().Be("Director's Cut");
         }
 
         [Test]

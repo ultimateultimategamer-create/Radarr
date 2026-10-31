@@ -21,6 +21,8 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Host;
 using NzbDrone.SignalR;
 using NzbDrone.Test.Common;
@@ -55,6 +57,13 @@ namespace NzbDrone.App.Test
             container.RegisterInstance<IOptions<LogOptions>>(new Mock<IOptions<LogOptions>>().Object);
 
             _container = container.GetServiceProvider();
+        }
+
+        [Test]
+        public void should_resolve_movie_and_version_services_without_a_dependency_cycle()
+        {
+            _container.GetRequiredService<IMovieService>().Should().NotBeNull();
+            _container.GetRequiredService<IMovieVersionService>().Should().NotBeNull();
         }
 
         [Test]

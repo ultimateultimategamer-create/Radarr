@@ -181,6 +181,11 @@ namespace NzbDrone.Core.MediaFiles
             {
                 decisions = decisions.Where(decision =>
                 {
+                    if (!decision.Approved || decision.LocalMovie?.Quality?.Quality == null)
+                    {
+                        return false;
+                    }
+
                     var matches = MovieVersionMatcher.BestMatches(
                         allVersions.Where(v => v.Path.PathEquals(movie.Path)),
                         decision.LocalMovie.Quality.Quality,

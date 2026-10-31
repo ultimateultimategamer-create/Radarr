@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - multi-version
+      - codex/named-movie-versions
+  pull_request:
+    branches:
+      - multi-version
+      - develop
   workflow_dispatch:
 
 permissions:
@@ -11,7 +16,7 @@ permissions:
 
 jobs:
   backend:
-    name: Backend build and unit tests
+    name: Backend Release tests, Debug regressions and startup
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -24,7 +29,10 @@ jobs:
           global-json-file: global.json
 
       - name: Build
-        run: dotnet build src/Radarr.sln -c Debug -p:Platform=Posix
+        run: dotnet build src/Radarr.sln -c Release -p:Platform=Posix
+
+      - name: Release startup smoke test
+        run: python3 .github/scripts/smoke-startup.py _output/net10.0/Radarr.Console.dll
 
       - name: Unit tests
         id: tests
@@ -34,22 +42,43 @@ jobs:
         run: |
           mkdir -p ~/.config/Radarr
           FILTER="Category!=ManualTest&Category!=WINDOWS&Category!=IntegrationTest&Category!=AutomationTest"
-          ASSEMBLIES=""
-          for name in Radarr.Core.Test Radarr.Api.Test Radarr.Common.Test; do
+          ASSEMBLIES=()
+          for name in Radarr.Core.Test Radarr.Api.Test Radarr.Common.Test Radarr.Host.Test; do
             dll=$(find _tests -name "$name.dll" -not -path "*/ref/*" | head -1)
-            if [ -n "$dll" ]; then
-              ASSEMBLIES="$ASSEMBLIES $dll"
-            fi
+            test -n "$dll" || { echo "Missing test assembly: $name"; exit 1; }
+            ASSEMBLIES+=("$dll")
           done
-          echo "Testing:$ASSEMBLIES"
-          dotnet test $ASSEMBLIES --filter "$FILTER" --logger trx --results-directory TestResults
+          dotnet test "${ASSEMBLIES[@]}" --filter "$FILTER" --logger trx --results-directory TestResults/Release
+
+      - name: Debug build
+        run: dotnet build src/Radarr.sln -c Debug -p:Platform=Posix
+
+      - name: Debug startup smoke test
+        run: python3 .github/scripts/smoke-startup.py _output/net10.0/Radarr.Console.dll
+
+      - name: Debug version and container regression tests
+        id: debug_tests
+        continue-on-error: true
+        env:
+          RADARR_TESTS_LOG_OUTPUT: File
+        run: |
+          # The full suite runs in Release, matching upstream. Debug additionally checks version behavior and host wiring.
+          FILTER="Category!=ManualTest&Category!=WINDOWS&Category!=IntegrationTest&Category!=AutomationTest"
+          VERSION_FILTER="FullyQualifiedName~MovieVersion|FullyQualifiedName~Versions|FullyQualifiedName~DownloadDecisionMaker|FullyQualifiedName~PendingReleaseServiceTests|FullyQualifiedName~DiskScanServiceTests|FullyQualifiedName~ImportApprovedMoviesFixture|FullyQualifiedName~ManualImportServiceFixture|FullyQualifiedName~NzbDrone.App.Test|FullyQualifiedName~NzbDrone.Host.Test|FullyQualifiedName~NzbDrone.Api.Test"
+          ASSEMBLIES=()
+          for name in Radarr.Core.Test Radarr.Api.Test Radarr.Host.Test; do
+            dll=$(find _tests -name "$name.dll" -not -path "*/ref/*" | head -1)
+            test -n "$dll" || { echo "Missing test assembly: $name"; exit 1; }
+            ASSEMBLIES+=("$dll")
+          done
+          dotnet test "${ASSEMBLIES[@]}" --filter "$FILTER&($VERSION_FILTER)" --logger trx --results-directory TestResults/Debug
 
       - name: Report failed tests
         if: always()
         run: python3 .github/scripts/report-test-failures.py TestResults
 
       - name: Fail when tests failed
-        if: steps.tests.outcome == 'failure'
+        if: always() && (steps.tests.outcome == 'failure' || steps.debug_tests.outcome == 'failure')
         run: exit 1
 
       - name: Upload test results

@@ -61,6 +61,18 @@ namespace Radarr.Api.V3.MovieVersions
         {
             var version = _movieVersionService.UpdateVersion(resource.Id, resource.Name, resource.QualityProfileId, resource.RequiredCustomFormatIds);
 
+            // Coordinate the two services here so version resolution never depends on MovieService.
+            if (_movieVersionService.GetPrimary(version.MovieId).Id == version.Id)
+            {
+                var movie = _movieService.GetMovie(version.MovieId);
+
+                if (movie.QualityProfileId != version.QualityProfileId)
+                {
+                    movie.QualityProfileId = version.QualityProfileId;
+                    _movieService.UpdateMovie(movie);
+                }
+            }
+
             return Accepted(version.Id);
         }
 

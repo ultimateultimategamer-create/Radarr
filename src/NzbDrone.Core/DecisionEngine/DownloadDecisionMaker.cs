@@ -170,7 +170,10 @@ namespace NzbDrone.Core.DecisionEngine
         {
             var decisions = new List<DownloadDecision>();
             var versions = GetVersionsToEvaluate(remoteMovie.Movie, information.SearchCriteria, versionsByMovie);
-            var matchingVersions = MovieVersionMatcher.BestMatches(versions, remoteMovie.ParsedMovieInfo.Quality?.Quality ?? Quality.Unknown, remoteMovie.CustomFormats);
+            var applyVersionRules = versions.Count > 1 || versions.Any(m => m.Version?.RequiredCustomFormatIds?.Any() == true);
+            var matchingVersions = applyVersionRules
+                ? MovieVersionMatcher.BestMatches(versions, remoteMovie.ParsedMovieInfo.Quality?.Quality ?? Quality.Unknown, remoteMovie.CustomFormats)
+                : versions;
             var singleVersion = remoteMovie.Movie.IsVersionView || information.SearchCriteria is { SingleMovieVersion: true };
 
             foreach (var movie in versions)
@@ -181,7 +184,14 @@ namespace NzbDrone.Core.DecisionEngine
 
                 _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", versionRemoteMovie.CustomFormatScore, versionRemoteMovie.CustomFormats?.ConcatToString(), remoteMovie.Release.Title);
 
-                if (!matchingVersions.Contains(movie))
+                // Preserve Radarr's standard checks and rejection reasons, including for single-version movies.
+                var decision = GetDecisionForReport(versionRemoteMovie, information);
+
+                if (!decision.Approved && !decision.TemporarilyRejected)
+                {
+                    decisions.Add(decision);
+                }
+                else if (!matchingVersions.Contains(movie))
                 {
                     decisions.Add(new DownloadDecision(versionRemoteMovie, new DownloadRejection(DownloadRejectionReason.MovieVersionRequirements, "Release does not match this version's requirements")));
                 }
@@ -191,7 +201,7 @@ namespace NzbDrone.Core.DecisionEngine
                 }
                 else
                 {
-                    decisions.Add(GetDecisionForReport(versionRemoteMovie, information));
+                    decisions.Add(decision);
                 }
             }
 
@@ -212,27 +222,35 @@ namespace NzbDrone.Core.DecisionEngine
 
         private List<Movie> GetVersionsToEvaluate(Movie movie, SearchCriteriaBase searchCriteria, Dictionary<int, List<Movie>> versionsByMovie)
         {
-            if (!movie.IsVersionView && movie.Version == null)
-            {
-                movie.Version = _movieVersionService.GetPrimary(movie.Id);
-            }
-
             // The search was for a specific version
-            if (movie.IsVersionView || searchCriteria is { SingleMovieVersion: true })
+            if (movie.IsVersionView)
             {
                 return new List<Movie> { movie };
             }
 
-            if (!versionsByMovie.TryGetValue(movie.Id, out var additionalVersions))
-            {
-                var views = _movieVersionService.GetAdditionalVersionViews(movie) ?? Enumerable.Empty<Movie>();
+            var singleVersion = searchCriteria is { SingleMovieVersion: true };
 
-                additionalVersions = views.Where(v => v.QualityProfile != null).ToList();
-                versionsByMovie[movie.Id] = additionalVersions;
+            if (!versionsByMovie.TryGetValue(movie.Id, out var cachedVersions))
+            {
+                movie.Version ??= _movieVersionService.GetPrimary(movie.Id);
+                cachedVersions = new List<Movie> { movie };
+
+                if (!singleVersion)
+                {
+                    var views = _movieVersionService.GetAdditionalVersionViews(movie) ?? Enumerable.Empty<Movie>();
+                    cachedVersions.AddRange(views.Where(v => v.QualityProfile != null));
+                }
+
+                versionsByMovie[movie.Id] = cachedVersions;
             }
 
+            movie.Version = cachedVersions[0].Version;
             var movies = new List<Movie> { movie };
-            movies.AddRange(additionalVersions);
+
+            if (!singleVersion)
+            {
+                movies.AddRange(cachedVersions.Skip(1));
+            }
 
             return movies;
         }

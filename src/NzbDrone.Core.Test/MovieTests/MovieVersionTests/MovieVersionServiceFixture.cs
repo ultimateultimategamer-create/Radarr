@@ -310,18 +310,18 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
-        public void should_keep_the_movie_quality_profile_in_sync_when_editing_the_primary_version()
+        public void should_save_primary_version_settings_without_loading_the_movie_service()
         {
             var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original", QualityProfileId = 3 };
             GivenQualityProfile(4);
             Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.Get(1)).Returns(primary);
             Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion> { primary });
-            Mocker.GetMock<IMovieRepository>().Setup(s => s.Get(_movie.Id)).Returns(_movie);
 
             Subject.UpdateVersion(1, "Theatrical", 4, null);
 
-            Mocker.GetMock<IMovieService>()
-                  .Verify(s => s.UpdateMovie(It.Is<Movie>(m => m.Id == _movie.Id && m.QualityProfileId == 4)), Times.Once());
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(s => s.Update(It.Is<MovieVersion>(v => v.Id == 1 && v.Name == "Theatrical" && v.QualityProfileId == 4)), Times.Once());
+            Mocker.GetMock<IMovieRepository>().Verify(s => s.Get(It.IsAny<int>()), Times.Never());
         }
 
         [Test]

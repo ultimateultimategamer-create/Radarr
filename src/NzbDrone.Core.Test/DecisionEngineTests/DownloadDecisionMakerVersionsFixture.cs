@@ -12,6 +12,7 @@ using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.DecisionEngineTests
@@ -72,6 +73,56 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         {
             _spec.Setup(c => c.IsSatisfiedBy(It.Is<RemoteMovie>(r => r.Movie.MovieVersionId == 7), It.IsAny<ReleaseDecisionInformation>()))
                  .Returns(accepts ? DownloadSpecDecision.Accept() : DownloadSpecDecision.Reject(DownloadRejectionReason.QualityNotWanted, "additional"));
+        }
+
+        [Test]
+        public void should_preserve_standard_quality_rejections_for_a_movie_without_additional_versions()
+        {
+            GivenPrimaryVersionAccepts(false);
+            _movie.QualityProfile.Items = new List<QualityProfileQualityItem>
+            {
+                new QualityProfileQualityItem { Quality = Quality.Bluray1080p, Allowed = false }
+            };
+            _remoteMovie.ParsedMovieInfo.Quality = new QualityModel(Quality.Bluray1080p);
+            Mocker.GetMock<IMovieVersionService>().Setup(s => s.GetAdditionalVersionViews(_movie)).Returns(new List<Movie>());
+
+            var decision = Subject.GetRssDecision(_reports).Single();
+
+            decision.Rejections.Single().Reason.Should().Be(DownloadRejectionReason.QualityNotWanted);
+            decision.Rejections.Single().Message.Should().Be("primary");
+            _spec.Verify(s => s.IsSatisfiedBy(_remoteMovie, It.IsAny<ReleaseDecisionInformation>()), Times.Once());
+        }
+
+        [Test]
+        public void should_run_standard_checks_even_when_a_version_does_not_match()
+        {
+            GivenPrimaryVersionAccepts(true);
+            GivenAdditionalVersionAccepts(false);
+            _versionView.Version.RequiredCustomFormatIds.Add(42);
+
+            Subject.GetRssDecision(_reports);
+
+            _spec.Verify(s => s.IsSatisfiedBy(It.Is<RemoteMovie>(m => m.Movie.MovieVersionId == 7), It.IsAny<ReleaseDecisionInformation>()), Times.Once());
+        }
+
+        [Test]
+        public void should_load_primary_version_metadata_once_per_movie_per_rss_batch()
+        {
+            GivenPrimaryVersionAccepts(true);
+            GivenAdditionalVersionAccepts(true);
+            _reports.Add(new ReleaseInfo { Title = _reports[0].Title });
+            Mocker.GetMock<IParsingService>()
+                  .Setup(s => s.Map(It.IsAny<ParsedMovieInfo>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<SearchCriteriaBase>()))
+                  .Returns(() => new RemoteMovie
+                  {
+                      Movie = new Movie { Id = _movie.Id, QualityProfileId = _movie.QualityProfileId, QualityProfile = _movie.QualityProfile },
+                      ParsedMovieInfo = new ParsedMovieInfo()
+                  });
+
+            Subject.GetRssDecision(_reports);
+
+            Mocker.GetMock<IMovieVersionService>().Verify(s => s.GetPrimary(_movie.Id), Times.Once());
+            Mocker.GetMock<IMovieVersionService>().Verify(s => s.GetAdditionalVersionViews(It.IsAny<Movie>()), Times.Once());
         }
 
         [Test]

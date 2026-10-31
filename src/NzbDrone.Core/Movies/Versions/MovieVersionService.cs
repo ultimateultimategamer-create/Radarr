@@ -50,7 +50,6 @@ namespace NzbDrone.Core.Movies.Versions
     {
         private readonly IMovieVersionRepository _repository;
         private readonly IMovieRepository _movieRepository;
-        private readonly IMovieService _movieService;
         private readonly IMediaFileRepository _mediaFileRepository;
         private readonly IQualityProfileRepository _qualityProfileRepository;
         private readonly ICustomFormatService _customFormatService;
@@ -59,7 +58,6 @@ namespace NzbDrone.Core.Movies.Versions
 
         public MovieVersionService(IMovieVersionRepository repository,
                                    IMovieRepository movieRepository,
-                                   IMovieService movieService,
                                    IMediaFileRepository mediaFileRepository,
                                    IQualityProfileRepository qualityProfileRepository,
                                    ICustomFormatService customFormatService,
@@ -68,7 +66,6 @@ namespace NzbDrone.Core.Movies.Versions
         {
             _repository = repository;
             _movieRepository = movieRepository;
-            _movieService = movieService;
             _mediaFileRepository = mediaFileRepository;
             _qualityProfileRepository = qualityProfileRepository;
             _customFormatService = customFormatService;
@@ -228,14 +225,6 @@ namespace NzbDrone.Core.Movies.Versions
             version.Name = name;
             version.QualityProfileId = qualityProfileId;
             version.RequiredCustomFormatIds = requiredCustomFormatIds?.Distinct().ToList() ?? new List<int>();
-
-            if (GetPrimary(version.MovieId).Id == id)
-            {
-                // The primary quality profile remains editable through the existing movie editor.
-                var movie = _movieRepository.Get(version.MovieId);
-                movie.QualityProfileId = qualityProfileId;
-                _movieService.UpdateMovie(movie);
-            }
 
             return _repository.Update(version);
         }

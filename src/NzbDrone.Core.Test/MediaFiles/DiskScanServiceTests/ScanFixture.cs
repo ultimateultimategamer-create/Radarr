@@ -583,6 +583,57 @@ namespace NzbDrone.Core.Test.MediaFiles.DiskScanServiceTests
         }
 
         [Test]
+        public void should_skip_unreadable_files_when_matching_versions_in_a_shared_folder()
+        {
+            GivenMovieFolder();
+            GivenAdditionalVersion(_movie.Path);
+            var path = Path.Combine(_movie.Path, "Unreadable.mkv");
+            GivenFiles(new[] { path });
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Setup(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.IsAny<Movie>(), false))
+                  .Returns<List<string>, Movie, bool>((paths, movie, filter) => new List<ImportDecision>
+                  {
+                      new ImportDecision(new LocalMovie { Movie = movie, Path = path }, new ImportRejection(ImportRejectionReason.UnableToParse, "Unreadable"))
+                  });
+
+            Subject.Scan(_movie);
+
+            Mocker.GetMock<IImportApprovedMovie>()
+                  .Verify(s => s.Import(It.Is<List<ImportDecision>>(d => d.Count > 0), false, null, ImportMode.Auto), Times.Never());
+        }
+
+        [Test]
+        public void should_assign_a_shared_folder_file_to_a_narrower_profile_instead_of_any()
+        {
+            GivenMovieFolder();
+            GivenFiles(new[] { Path.Combine(_movie.Path, "Movie.1080p.mkv") });
+            _movie.QualityProfile = new QualityProfile
+            {
+                Items = new List<QualityProfileQualityItem>
+                {
+                    new QualityProfileQualityItem { Quality = Quality.Bluray1080p, Allowed = true },
+                    new QualityProfileQualityItem { Quality = Quality.Bluray2160p, Allowed = true }
+                }
+            };
+            var version = GivenAdditionalVersion(_movie.Path);
+            version.QualityProfile = new QualityProfile
+            {
+                Items = new List<QualityProfileQualityItem> { new QualityProfileQualityItem { Quality = Quality.Bluray1080p, Allowed = true } }
+            };
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Setup(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.IsAny<Movie>(), false))
+                  .Returns<List<string>, Movie, bool>((paths, movie, filter) => paths.Select(path =>
+                      new ImportDecision(new LocalMovie { Movie = movie, Path = path, Quality = new QualityModel(Quality.Bluray1080p) })).ToList());
+
+            Subject.Scan(_movie);
+
+            Mocker.GetMock<IImportApprovedMovie>()
+                  .Verify(s => s.Import(It.Is<List<ImportDecision>>(d => d.Count == 1 && d[0].LocalMovie.Movie.MovieVersionId == 7), false, null, ImportMode.Auto), Times.Once());
+            Mocker.GetMock<IImportApprovedMovie>()
+                  .Verify(s => s.Import(It.Is<List<ImportDecision>>(d => d.Count > 0 && d[0].LocalMovie.Movie.MovieVersionId == 0), false, null, ImportMode.Auto), Times.Never());
+        }
+
+        [Test]
         public void should_not_import_file_of_another_version_sharing_the_movie_folder()
         {
             GivenMovieFolder();

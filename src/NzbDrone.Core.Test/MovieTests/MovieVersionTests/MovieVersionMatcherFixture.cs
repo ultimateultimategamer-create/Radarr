@@ -67,6 +67,24 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_prefer_a_narrower_quality_profile_to_any_when_the_rules_are_the_same()
+        {
+            var any = CreateVersion("Any");
+            any.QualityProfile.Items[1].Allowed = true;
+            var hd = CreateVersion("HD");
+
+            MovieVersionMatcher.BestMatches(new[] { any, hd }, Quality.Bluray1080p, null)
+                               .Should().Equal(hd);
+        }
+
+        [Test]
+        public void should_not_choose_between_different_profiles_with_the_same_allowed_qualities()
+        {
+            MovieVersionMatcher.BestMatches(new[] { CreateVersion("Theatrical"), CreateVersion("Extended") }, Quality.Bluray1080p, null)
+                               .Should().HaveCount(2);
+        }
+
+        [Test]
         public void should_keep_ambiguous_matches_for_manual_assignment()
         {
             MovieVersionMatcher.BestMatches(new[] { CreateVersion("Theatrical"), CreateVersion("Remaster") }, Quality.Bluray1080p, null)

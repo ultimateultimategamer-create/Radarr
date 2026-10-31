@@ -18,11 +18,15 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
         {
             using var mapper = _database.OpenConnection();
 
-            mapper.Execute(@"INSERT INTO ""MovieVersions"" (""MovieId"", ""QualityProfileId"", ""Path"", ""MovieFileId"")
-                             SELECT ""Movies"".""Id"", ""Movies"".""QualityProfileId"", ""Movies"".""Path"", ""Movies"".""MovieFileId"" FROM ""Movies""
+            mapper.Execute(@"INSERT INTO ""MovieVersions"" (""MovieId"", ""Name"", ""QualityProfileId"", ""Path"", ""MovieFileId"")
+                             SELECT ""Movies"".""Id"", 'Original', ""Movies"".""QualityProfileId"", ""Movies"".""Path"", ""Movies"".""MovieFileId"" FROM ""Movies""
                              LEFT OUTER JOIN ""MovieVersions""
                              ON ""Movies"".""Id"" = ""MovieVersions"".""MovieId""
                              WHERE ""MovieVersions"".""Id"" IS NULL");
+
+            mapper.Execute(@"UPDATE ""MovieVersions"" SET ""Name"" = 'Original'
+                             WHERE ""Id"" IN (SELECT MIN(""Id"") FROM ""MovieVersions"" GROUP BY ""MovieId"")
+                             AND TRIM(COALESCE(""Name"", '')) = ''");
 
             // Keep the primary version's file in sync with the movie's file
             mapper.Execute(@"UPDATE ""MovieVersions""

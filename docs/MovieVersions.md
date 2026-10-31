@@ -14,7 +14,7 @@ Use a version's search button to choose releases for that version. Its name also
 
 Automatic downloads require the version's matching rules. If versions share a quality profile and cannot be distinguished by their rules, search for a specific version or use manual import. Explicit custom-format rules take precedence over a general version with no rules.
 
-On rescan, untracked files in the shared movie folder are assigned only when their quality and custom formats identify one version. Ambiguous files remain available for manual import. Files already assigned to a version keep that assignment.
+On rescan, untracked files in the shared movie folder are assigned only when their quality and custom formats identify one version. Explicit format rules take precedence over more general rules. When the format rules are the same, a narrower quality profile takes precedence over a broader one such as **Any**. Equally specific or independent matches remain available for manual import. Files already assigned to a version keep that assignment. Unreadable and rejected files do not stop the scan.
 
 Versions share the movie folder. When file names collide, Radarr appends the version's name and, if necessary, a numeric suffix. An upgrade affects only its target version.
 

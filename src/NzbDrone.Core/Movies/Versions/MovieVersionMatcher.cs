@@ -21,7 +21,8 @@ namespace NzbDrone.Core.Movies.Versions
             return movie.Version?.RequiredCustomFormatIds?.All(matchedIds.Contains) ?? true;
         }
 
-        // Prefer explicit rules to a general profile. Equal matches require a user to choose a version.
+        // Prefer more specific format rules, then narrower profiles with the same format rules.
+        // Equally specific or independent matches still require a user to choose a version.
         public static List<Movie> BestMatches(IEnumerable<Movie> movies, Quality quality, IEnumerable<CustomFormat> customFormats)
         {
             var matches = movies.Where(m => Matches(m, quality, customFormats)).ToList();
@@ -34,10 +35,15 @@ namespace NzbDrone.Core.Movies.Versions
             var requirements = matches.Select(movie => new
             {
                 Movie = movie,
-                Formats = (movie.Version?.RequiredCustomFormatIds ?? new List<int>()).ToHashSet()
+                Formats = (movie.Version?.RequiredCustomFormatIds ?? new List<int>()).ToHashSet(),
+                Qualities = movie.QualityProfile?.Items?.Where(i => i.Allowed)
+                                 .SelectMany(i => i.GetQualities()).Select(q => q.Id).ToHashSet()
             }).ToList();
 
-            return requirements.Where(candidate => !requirements.Any(other => other.Formats.IsProperSupersetOf(candidate.Formats)))
+            return requirements.Where(candidate => !requirements.Any(other =>
+                                   other.Formats.IsProperSupersetOf(candidate.Formats) ||
+                                   (other.Formats.SetEquals(candidate.Formats) && other.Qualities != null && candidate.Qualities != null &&
+                                    other.Qualities.IsProperSubsetOf(candidate.Qualities))))
                                .Select(candidate => candidate.Movie)
                                .ToList();
         }
