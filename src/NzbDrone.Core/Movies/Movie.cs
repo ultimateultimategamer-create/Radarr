@@ -42,6 +42,7 @@ namespace NzbDrone.Core.Movies
         private int _movieVersionId;
         public int MovieVersionId => _movieVersionId;
         public bool IsVersionView => _movieVersionId > 0;
+        public MovieVersion Version { get; set; }
 
         // compatibility properties
         public string Title
@@ -73,6 +74,7 @@ namespace NzbDrone.Core.Movies
             var view = (Movie)MemberwiseClone();
 
             view._movieVersionId = version.Id;
+            view.Version = version;
             view.Path = version.Path;
             view.QualityProfileId = version.QualityProfileId;
             view.QualityProfile = null;

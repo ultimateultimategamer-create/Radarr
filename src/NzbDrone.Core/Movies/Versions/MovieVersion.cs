@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.Movies.Versions
@@ -5,7 +6,9 @@ namespace NzbDrone.Core.Movies.Versions
     public class MovieVersion : ModelBase
     {
         public int MovieId { get; set; }
+        public string Name { get; set; }
         public int QualityProfileId { get; set; }
+        public List<int> RequiredCustomFormatIds { get; set; } = new List<int>();
         public string Path { get; set; }
         public int MovieFileId { get; set; }
 

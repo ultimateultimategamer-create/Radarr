@@ -263,7 +263,7 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
   const [isDeleteMovieModalOpen, setIsDeleteMovieModalOpen] = useState(false);
   const [isMovieHistoryModalOpen, setIsMovieHistoryModalOpen] = useState(false);
   const [isAddVersionModalOpen, setIsAddVersionModalOpen] = useState(false);
-  const { versions, refetchVersions, removeVersion } =
+  const { versions, refetchVersions, removeVersion, removeError } =
     useMovieVersions(movieId);
   const [titleRef, { width: titleWidth }] = useMeasure();
   const [overviewRef, { height: overviewHeight }] = useMeasure();
@@ -936,6 +936,9 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
           ) : null}
 
           <FieldSet legend={translate('Files')}>
+            {removeError ? (
+              <Alert kind={kinds.DANGER}>{removeError}</Alert>
+            ) : null}
             <MovieFileEditorTable
               movieId={id}
               versions={versions}

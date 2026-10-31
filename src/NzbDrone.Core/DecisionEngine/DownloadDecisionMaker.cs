@@ -13,6 +13,7 @@ using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.DecisionEngine
 {
@@ -168,8 +169,11 @@ namespace NzbDrone.Core.DecisionEngine
         private List<DownloadDecision> GetDecisionsForVersions(RemoteMovie remoteMovie, ReleaseDecisionInformation information, Dictionary<int, List<Movie>> versionsByMovie)
         {
             var decisions = new List<DownloadDecision>();
+            var versions = GetVersionsToEvaluate(remoteMovie.Movie, information.SearchCriteria, versionsByMovie);
+            var matchingVersions = MovieVersionMatcher.BestMatches(versions, remoteMovie.ParsedMovieInfo.Quality?.Quality ?? Quality.Unknown, remoteMovie.CustomFormats);
+            var singleVersion = remoteMovie.Movie.IsVersionView || information.SearchCriteria is { SingleMovieVersion: true };
 
-            foreach (var movie in GetVersionsToEvaluate(remoteMovie.Movie, information.SearchCriteria, versionsByMovie))
+            foreach (var movie in versions)
             {
                 var versionRemoteMovie = ReferenceEquals(movie, remoteMovie.Movie) ? remoteMovie : remoteMovie.CloneForMovie(movie);
 
@@ -177,7 +181,18 @@ namespace NzbDrone.Core.DecisionEngine
 
                 _logger.Trace("Custom Format Score of '{0}' [{1}] calculated for '{2}'", versionRemoteMovie.CustomFormatScore, versionRemoteMovie.CustomFormats?.ConcatToString(), remoteMovie.Release.Title);
 
-                decisions.Add(GetDecisionForReport(versionRemoteMovie, information));
+                if (!matchingVersions.Contains(movie))
+                {
+                    decisions.Add(new DownloadDecision(versionRemoteMovie, new DownloadRejection(DownloadRejectionReason.MovieVersionRequirements, "Release does not match this version's requirements")));
+                }
+                else if (!singleVersion && matchingVersions.Count(m => m.QualityProfileId == movie.QualityProfileId) > 1)
+                {
+                    decisions.Add(new DownloadDecision(versionRemoteMovie, new DownloadRejection(DownloadRejectionReason.MovieVersionAmbiguous, "Release matches several versions. Search for a specific version or add matching rules")));
+                }
+                else
+                {
+                    decisions.Add(GetDecisionForReport(versionRemoteMovie, information));
+                }
             }
 
             if (decisions.Count <= 1)
@@ -197,6 +212,11 @@ namespace NzbDrone.Core.DecisionEngine
 
         private List<Movie> GetVersionsToEvaluate(Movie movie, SearchCriteriaBase searchCriteria, Dictionary<int, List<Movie>> versionsByMovie)
         {
+            if (!movie.IsVersionView && movie.Version == null)
+            {
+                movie.Version = _movieVersionService.GetPrimary(movie.Id);
+            }
+
             // The search was for a specific version
             if (movie.IsVersionView || searchCriteria is { SingleMovieVersion: true })
             {

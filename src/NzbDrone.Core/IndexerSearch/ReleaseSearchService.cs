@@ -64,7 +64,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             if (movieVersionId > 0)
             {
-                movie = _movieVersionService.GetVersionView(movie, movieVersionId) ?? movie;
+                movie = _movieVersionService.GetVersionView(movie, movieVersionId);
             }
 
             return await MovieSearch(movie, userInvokedSearch, interactiveSearch, movieVersionId > 0);

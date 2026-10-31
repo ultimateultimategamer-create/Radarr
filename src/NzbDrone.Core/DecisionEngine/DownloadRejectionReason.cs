@@ -65,5 +65,7 @@ public enum DownloadRejectionReason
     DiskCustomFormatScore,
     DiskCustomFormatScoreIncrement,
     DiskUpgradesNotAllowed,
-    QueueSameReleaseOtherVersion
+    QueueSameReleaseOtherVersion,
+    MovieVersionRequirements,
+    MovieVersionAmbiguous
 }

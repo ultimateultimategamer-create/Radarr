@@ -185,6 +185,44 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         }
 
         [Test]
+        public void should_match_a_named_version_using_its_required_custom_formats()
+        {
+            GivenPrimaryVersionAccepts(true);
+            GivenAdditionalVersionAccepts(true);
+            _versionView.Version.RequiredCustomFormatIds = new List<int> { 42 };
+            Mocker.GetMock<ICustomFormatCalculationService>()
+                  .Setup(c => c.ParseCustomFormat(It.IsAny<RemoteMovie>(), It.IsAny<long>()))
+                  .Returns(new List<CustomFormat> { new CustomFormat { Id = 42 } });
+
+            var decision = Subject.GetRssDecision(_reports).Single();
+
+            decision.RemoteMovie.Movie.MovieVersionId.Should().Be(7);
+            decision.Approved.Should().BeTrue();
+        }
+
+        [Test]
+        public void should_not_automatically_choose_between_named_versions_with_the_same_profile()
+        {
+            GivenPrimaryVersionAccepts(true);
+            GivenAdditionalVersionAccepts(true);
+            _versionView.QualityProfileId = _movie.QualityProfileId;
+
+            Subject.GetRssDecision(_reports).Should().OnlyContain(d => !d.Approved);
+        }
+
+        [Test]
+        public void should_allow_an_explicit_search_for_a_named_version_with_a_shared_profile()
+        {
+            GivenAdditionalVersionAccepts(true);
+            _versionView.QualityProfileId = _movie.QualityProfileId;
+            _remoteMovie.Movie = _versionView;
+
+            var criteria = new MovieSearchCriteria { Movie = _versionView, InteractiveSearch = true, SingleMovieVersion = true };
+
+            Subject.GetSearchDecision(_reports, criteria).Single().Approved.Should().BeTrue();
+        }
+
+        [Test]
         public void should_skip_versions_without_quality_profile()
         {
             GivenPrimaryVersionAccepts(false);

@@ -4,6 +4,7 @@ using FizzWare.NBuilder;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
@@ -128,7 +129,7 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
             Subject.Handle(new MovieEditedEvent(_movie, _movie));
 
             Mocker.GetMock<IMovieVersionRepository>()
-                  .Verify(v => v.Update(It.Is<MovieVersion>(m => m.Id == 1 && m.Path == _movie.Path && m.QualityProfileId == _movie.QualityProfileId)), Times.Once());
+                  .Verify(v => v.UpdateMany(It.Is<IList<MovieVersion>>(l => l.Count == 1 && l[0].Id == 1 && l[0].Path == _movie.Path && l[0].QualityProfileId == _movie.QualityProfileId)), Times.Once());
         }
 
         [Test]
@@ -180,7 +181,7 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
             GivenQualityProfile(4);
             GivenPrimaryVersion();
 
-            Subject.AddVersion(_movie, 4);
+            Subject.AddVersion(_movie, 4, "Director's Cut");
 
             Mocker.GetMock<IMovieVersionRepository>()
                   .Verify(v => v.Insert(It.Is<MovieVersion>(m => m.MovieId == _movie.Id && m.QualityProfileId == 4 && m.Path == _movie.Path)), Times.Once());
@@ -199,7 +200,7 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
                   .Setup(s => s.Insert(It.IsAny<MovieVersion>()))
                   .Returns<MovieVersion>(v => v);
 
-            Subject.AddVersion(_movie, 4);
+            Subject.AddVersion(_movie, 4, "Director's Cut");
 
             Mocker.GetMock<IMovieVersionRepository>()
                   .Verify(v => v.Insert(It.Is<MovieVersion>(m => m.QualityProfileId == _movie.QualityProfileId)), Times.Once());
@@ -209,15 +210,15 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
-        public void should_not_add_the_same_version_twice()
+        public void should_not_add_the_same_version_name_twice()
         {
             GivenQualityProfile(3);
 
             Mocker.GetMock<IMovieVersionRepository>()
                   .Setup(s => s.FindByMovieId(_movie.Id))
-                  .Returns(new List<MovieVersion> { new MovieVersion { Id = 1, MovieId = _movie.Id, QualityProfileId = 3, Path = _movie.Path } });
+                  .Returns(new List<MovieVersion> { new MovieVersion { Id = 1, Name = "Director's Cut", MovieId = _movie.Id, QualityProfileId = 3, Path = _movie.Path } });
 
-            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 3));
+            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 3, " director's cut "));
 
             Mocker.GetMock<IMovieVersionRepository>()
                   .Verify(v => v.Insert(It.IsAny<MovieVersion>()), Times.Never());
@@ -226,7 +227,8 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         [Test]
         public void should_not_add_version_with_unknown_quality_profile()
         {
-            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 42));
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion>());
+            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 42, "Unknown profile"));
         }
 
         [Test]
@@ -281,7 +283,7 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
-        public void should_return_the_movie_for_a_version_of_another_movie()
+        public void should_reject_a_version_of_another_movie()
         {
             var otherMovieVersion = new MovieVersion { Id = 9, MovieId = 99 };
 
@@ -289,7 +291,89 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
                   .Setup(s => s.Find(9))
                   .Returns(otherMovieVersion);
 
-            Subject.GetVersionView(_movie, 9).Should().BeSameAs(_movie);
+            Assert.Throws<NzbDroneClientException>(() => Subject.GetVersionView(_movie, 9));
+        }
+
+        [Test]
+        public void should_edit_a_version_without_changing_its_identity_or_file()
+        {
+            var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original", QualityProfileId = 3 };
+            var additional = new MovieVersion { Id = 7, MovieId = _movie.Id, Name = "Old name", QualityProfileId = 4, MovieFileId = 42 };
+            GivenQualityProfile(3);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.Get(7)).Returns(additional);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion> { primary, additional });
+
+            Subject.UpdateVersion(7, "Director's Cut", 3, null);
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(s => s.Update(It.Is<MovieVersion>(v => v.Id == 7 && v.Name == "Director's Cut" && v.QualityProfileId == 3 && v.MovieFileId == 42)), Times.Once());
+        }
+
+        [Test]
+        public void should_keep_the_movie_quality_profile_in_sync_when_editing_the_primary_version()
+        {
+            var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original", QualityProfileId = 3 };
+            GivenQualityProfile(4);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.Get(1)).Returns(primary);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion> { primary });
+            Mocker.GetMock<IMovieRepository>().Setup(s => s.Get(_movie.Id)).Returns(_movie);
+
+            Subject.UpdateVersion(1, "Theatrical", 4, null);
+
+            Mocker.GetMock<IMovieService>()
+                  .Verify(s => s.UpdateMovie(It.Is<Movie>(m => m.Id == _movie.Id && m.QualityProfileId == 4)), Times.Once());
+        }
+
+        [Test]
+        public void should_persist_required_custom_formats_for_a_named_version()
+        {
+            GivenPrimaryVersion();
+            GivenQualityProfile(3);
+            Mocker.GetMock<ICustomFormatService>().Setup(s => s.All()).Returns(new List<CustomFormat> { new CustomFormat { Id = 42 } });
+
+            Subject.AddVersion(_movie, 3, "Remaster", new List<int> { 42, 42 });
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(s => s.Insert(It.Is<MovieVersion>(v => v.Name == "Remaster" && v.RequiredCustomFormatIds.Count == 1 && v.RequiredCustomFormatIds[0] == 42)), Times.Once());
+        }
+
+        [Test]
+        public void should_reject_rules_using_a_removed_custom_format()
+        {
+            GivenPrimaryVersion();
+            GivenQualityProfile(3);
+
+            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 3, "Remaster", new List<int> { 42 }));
+        }
+
+        [Test]
+        public void should_allow_several_named_versions_with_the_same_quality_profile()
+        {
+            GivenPrimaryVersion();
+            GivenQualityProfile(3);
+
+            Subject.AddVersion(_movie, 3, "Director's Cut");
+            Subject.AddVersion(_movie, 3, "Theatrical");
+
+            Mocker.GetMock<IMovieVersionRepository>().Verify(v => v.Insert(It.Is<MovieVersion>(m => m.Name == "Director's Cut" && m.QualityProfileId == 3)), Times.Once());
+            Mocker.GetMock<IMovieVersionRepository>().Verify(v => v.Insert(It.Is<MovieVersion>(m => m.Name == "Theatrical" && m.QualityProfileId == 3)), Times.Once());
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("   ")]
+        public void should_require_a_version_name(string name)
+        {
+            GivenPrimaryVersion();
+            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 3, name));
+        }
+
+        [Test]
+        public void should_reject_removed_download_targets_even_when_a_cached_view_is_available()
+        {
+            var cachedView = _movie.ForVersion(new MovieVersion { Id = 7, MovieId = _movie.Id });
+
+            Assert.Throws<NzbDroneClientException>(() => Subject.GetVersionView(cachedView, 7));
         }
 
         [Test]

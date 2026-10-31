@@ -7,6 +7,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.Download.History;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
@@ -276,7 +277,15 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 return;
             }
 
-            trackedDownload.RemoteMovie.Movie = _movieVersionService.GetVersionView(trackedDownload.RemoteMovie.Movie, movieVersionId) ?? trackedDownload.RemoteMovie.Movie;
+            try
+            {
+                trackedDownload.RemoteMovie.Movie = _movieVersionService.GetVersionView(trackedDownload.RemoteMovie.Movie, movieVersionId);
+            }
+            catch (NzbDroneClientException)
+            {
+                trackedDownload.RemoteMovie.Movie = null;
+                trackedDownload.Warn("The version this release was grabbed for has been removed. Choose a version using manual import");
+            }
         }
 
         private static TrackedDownloadState GetStateFromHistory(DownloadHistoryEventType eventType)

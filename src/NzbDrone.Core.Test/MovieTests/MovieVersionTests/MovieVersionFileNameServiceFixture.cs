@@ -86,6 +86,20 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_use_the_version_name_when_profiles_are_shared()
+        {
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.GetByMovieId(5))
+                  .Returns(new List<MovieVersion>
+                  {
+                      new MovieVersion { Id = 3, MovieId = 5, Name = "Theatrical", QualityProfileId = 1 },
+                      new MovieVersion { Id = 7, MovieId = 5, Name = "Director's Cut", QualityProfileId = 1 }
+                  });
+
+            Subject.GetUniqueFileName(_versionView, new MovieFile(), "Movie (2020)").Should().Be("Movie (2020) - Director's Cut");
+        }
+
+        [Test]
         public void should_compare_names_ignoring_case()
         {
             Subject.GetUniqueFileName(_versionView, new MovieFile(), "MOVIE (2020)").Should().Be("MOVIE (2020) - HD-1080p");

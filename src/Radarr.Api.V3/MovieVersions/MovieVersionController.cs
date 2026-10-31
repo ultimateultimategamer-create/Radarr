@@ -47,12 +47,21 @@ namespace Radarr.Api.V3.MovieVersions
         public Results<Created<MovieVersionResource>, NotFound> AddMovieVersion([FromBody] MovieVersionResource resource)
         {
             var movie = _movieService.GetMovie(resource.MovieId);
-            var version = _movieVersionService.AddVersion(movie, resource.QualityProfileId);
+            var version = _movieVersionService.AddVersion(movie, resource.QualityProfileId, resource.Name, resource.RequiredCustomFormatIds);
 
             // Pick up files already present in the movie's folder that this version wants
             _commandQueueManager.Push(new RescanMovieCommand(movie.Id));
 
             return Created(version.Id);
+        }
+
+        [RestPutById]
+        [Consumes("application/json")]
+        public Results<Accepted<MovieVersionResource>, NotFound> UpdateMovieVersion([FromBody] MovieVersionResource resource)
+        {
+            var version = _movieVersionService.UpdateVersion(resource.Id, resource.Name, resource.QualityProfileId, resource.RequiredCustomFormatIds);
+
+            return Accepted(version.Id);
         }
 
         [RestDeleteById]

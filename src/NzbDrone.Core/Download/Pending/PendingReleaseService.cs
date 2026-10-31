@@ -31,7 +31,7 @@ namespace NzbDrone.Core.Download.Pending
         List<Queue.Queue> GetPendingQueue();
         Queue.Queue FindPendingQueueItem(int queueId);
         void RemovePendingQueueItems(int queueId);
-        RemoteMovie OldestPendingRelease(int movieId);
+        RemoteMovie OldestPendingRelease(int movieId, int movieVersionId = 0);
     }
 
     public class PendingReleaseService : IPendingReleaseService,
@@ -229,14 +229,15 @@ namespace NzbDrone.Core.Download.Pending
             var targetItem = FindPendingRelease(queueId);
             var movieReleases = _repository.AllByMovieId(targetItem.MovieId);
 
-            var releasesToRemove = movieReleases.Where(c => c.ParsedMovieInfo.PrimaryMovieTitle == targetItem.ParsedMovieInfo.PrimaryMovieTitle);
+            var releasesToRemove = movieReleases.Where(c => c.ParsedMovieInfo.PrimaryMovieTitle == targetItem.ParsedMovieInfo.PrimaryMovieTitle &&
+                                                            (c.AdditionalInfo?.MovieVersionId ?? 0) == (targetItem.AdditionalInfo?.MovieVersionId ?? 0));
 
             _repository.DeleteMany(releasesToRemove.Select(c => c.Id));
         }
 
-        public RemoteMovie OldestPendingRelease(int movieId)
+        public RemoteMovie OldestPendingRelease(int movieId, int movieVersionId = 0)
         {
-            var movieReleases = GetPendingReleases(movieId);
+            var movieReleases = GetPendingReleases(movieId).Where(r => r.RemoteMovie.Movie.MovieVersionId == movieVersionId);
 
             return movieReleases.Select(r => r.RemoteMovie)
                                  .MaxBy(p => p.Release.AgeHours);
@@ -292,11 +293,18 @@ namespace NzbDrone.Core.Download.Pending
 
                 if (movieVersionId > 0)
                 {
+                    var version = _movieVersionService.Find(movieVersionId);
+
+                    if (version == null || version.MovieId != movie.Id)
+                    {
+                        continue;
+                    }
+
                     var versionKey = $"{movie.Id}-{movieVersionId}";
 
                     if (!versionMap.TryGetValue(versionKey, out var versionMovie))
                     {
-                        versionMovie = _movieVersionService.GetVersionView(movie, movieVersionId) ?? movie;
+                        versionMovie = _movieVersionService.GetVersionView(movie, movieVersionId);
                         versionMap[versionKey] = versionMovie;
                     }
 

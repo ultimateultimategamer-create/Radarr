@@ -7,7 +7,9 @@ import { icons, kinds } from 'Helpers/Props';
 import MovieInteractiveSearchModal from 'Movie/Search/MovieInteractiveSearchModal';
 import QualityProfileName from 'Settings/Profiles/Quality/QualityProfileName';
 import translate from 'Utilities/String/translate';
+import AddMovieVersionModal from './AddMovieVersionModal';
 import MovieVersion from './MovieVersion';
+import useMovieVersions from './useMovieVersions';
 import styles from './MovieVersionHeaderRow.css';
 
 interface MovieVersionHeaderRowProps {
@@ -21,7 +23,9 @@ function MovieVersionHeaderRow({
   colSpan,
   onRemovePress,
 }: MovieVersionHeaderRowProps) {
-  const { id, movieId, qualityProfileId, hasFile, isPrimary } = version;
+  const { id, movieId, name, qualityProfileId, hasFile, isPrimary } = version;
+  const { refetchVersions } = useMovieVersions(movieId);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const [isInteractiveSearchModalOpen, setIsInteractiveSearchModalOpen] =
     useState(false);
@@ -29,6 +33,13 @@ function MovieVersionHeaderRow({
   const handleRemovePress = useCallback(() => {
     onRemovePress(id);
   }, [id, onRemovePress]);
+
+  const handleEditPress = useCallback(() => setIsEditModalOpen(true), []);
+  const handleEditClose = useCallback(() => setIsEditModalOpen(false), []);
+  const handleVersionSaved = useCallback(() => {
+    setIsEditModalOpen(false);
+    refetchVersions();
+  }, [refetchVersions]);
 
   const handleInteractiveSearchPress = useCallback(() => {
     setIsInteractiveSearchModalOpen(true);
@@ -42,9 +53,9 @@ function MovieVersionHeaderRow({
     <TableRow className={styles.row}>
       <TableRowCell className={styles.cell} colSpan={colSpan}>
         <div className={styles.header}>
-          <span className={styles.profile}>
-            <QualityProfileName qualityProfileId={qualityProfileId} />
-          </span>
+          <span className={styles.profile}>{name}</span>
+
+          <QualityProfileName qualityProfileId={qualityProfileId} />
 
           {isPrimary ? (
             <Label kind={kinds.INFO}>{translate('PrimaryVersion')}</Label>
@@ -55,6 +66,12 @@ function MovieVersionHeaderRow({
           )}
 
           <div className={styles.actions}>
+            <IconButton
+              name={icons.EDIT}
+              title={translate('EditMovieVersion')}
+              onPress={handleEditPress}
+            />
+
             <IconButton
               name={icons.INTERACTIVE}
               title={translate('InteractiveSearchMovieVersion')}
@@ -70,6 +87,14 @@ function MovieVersionHeaderRow({
             )}
           </div>
         </div>
+
+        <AddMovieVersionModal
+          isOpen={isEditModalOpen}
+          movieId={movieId}
+          version={version}
+          onVersionAdded={handleVersionSaved}
+          onModalClose={handleEditClose}
+        />
 
         <MovieInteractiveSearchModal
           isOpen={isInteractiveSearchModalOpen}

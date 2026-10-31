@@ -51,7 +51,7 @@ class MovieFileEditorTableContent extends Component {
     } = this.props;
 
     // With several versions, show each version's files under a header with its quality profile and path
-    const groups = versions && versions.length > 1 ? groupFilesByVersion(items, versions) : null;
+    const groups = versions && versions.length > 0 ? groupFilesByVersion(items, versions) : null;
 
     return (
       <div>

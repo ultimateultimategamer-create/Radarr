@@ -15,7 +15,7 @@ namespace NzbDrone.Core.Movies.Versions
 
     // Versions of a movie share its folder, so the file of one version must never take the name of another version's file.
     // When the naming format gives two versions the same name (no quality in it, same quality for both...),
-    // the name gets the version's quality profile appended: "Movie (2020) - Ultra-HD.mkv", which Plex, Jellyfin and Emby
+    // the name gets the version's name appended: "Movie (2020) - Director's Cut.mkv", which Plex, Jellyfin and Emby
     // all group as versions of the same movie.
     public class MovieVersionFileNameService : IMovieVersionFileNameService
     {
@@ -62,7 +62,8 @@ namespace NzbDrone.Core.Movies.Versions
             }
 
             var profile = movie.QualityProfile ?? _qualityProfileRepository.Find(movie.QualityProfileId);
-            var versionName = FileNameBuilder.CleanFileName(profile?.Name ?? string.Empty).Trim();
+            var version = movie.IsVersionView ? versions.FirstOrDefault(v => v.Id == movie.MovieVersionId) : versions.OrderBy(v => v.Id).First();
+            var versionName = FileNameBuilder.CleanFileName(version?.Name ?? profile?.Name ?? string.Empty).Trim();
 
             if (versionName.IsNullOrWhiteSpace())
             {
@@ -71,9 +72,11 @@ namespace NzbDrone.Core.Movies.Versions
 
             var uniqueName = $"{fileName} - {versionName}";
 
-            if (takenNames.Contains(uniqueName))
+            var suffix = 2;
+
+            while (takenNames.Contains(uniqueName))
             {
-                uniqueName = $"{fileName} - {versionName} {movie.MovieVersionId}";
+                uniqueName = $"{fileName} - {versionName} {suffix++}";
             }
 
             return uniqueName;

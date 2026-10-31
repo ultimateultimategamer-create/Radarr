@@ -8,7 +8,9 @@ namespace Radarr.Api.V3.MovieVersions
     public class MovieVersionResource : RestResource
     {
         public int MovieId { get; set; }
+        public string Name { get; set; }
         public int QualityProfileId { get; set; }
+        public List<int> RequiredCustomFormatIds { get; set; } = new List<int>();
         public string Path { get; set; }
         public int MovieFileId { get; set; }
         public bool HasFile { get; set; }
@@ -28,7 +30,9 @@ namespace Radarr.Api.V3.MovieVersions
             {
                 Id = model.Id,
                 MovieId = model.MovieId,
+                Name = model.Name,
                 QualityProfileId = model.QualityProfileId,
+                RequiredCustomFormatIds = model.RequiredCustomFormatIds ?? new List<int>(),
                 Path = model.Path,
                 MovieFileId = model.MovieFileId,
                 HasFile = model.HasFile,

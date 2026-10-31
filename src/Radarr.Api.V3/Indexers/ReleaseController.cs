@@ -75,14 +75,20 @@ namespace Radarr.Api.V3.Indexers
         [Consumes("application/json")]
         public async Task<Results<Ok<ReleaseResource>, NotFound>> DownloadRelease([FromBody] ReleaseResource release)
         {
-            var remoteMovie = _remoteMovieCache.Find(GetCacheKey(release));
+            var cachedMovie = _remoteMovieCache.Find(GetCacheKey(release)) ?? _remoteMovieCache.Find(GetReleaseCacheKey(release));
 
-            if (remoteMovie == null)
+            if (cachedMovie == null)
             {
                 _logger.Debug("Couldn't find requested release in cache, cache timeout probably expired.");
 
                 throw new NzbDroneClientException(HttpStatusCode.NotFound, "Couldn't find requested release in cache, try searching again");
             }
+
+            // The request owns its target. A later search must not change which version is grabbed.
+            var targetMovieId = release.MovieId ?? cachedMovie.Movie?.Id;
+            var targetVersionId = release.MovieVersionId ?? cachedMovie.Movie?.MovieVersionId ?? 0;
+            var targetMovie = targetMovieId.HasValue ? GetMovieForRelease(targetMovieId.Value, targetVersionId) : null;
+            var remoteMovie = cachedMovie.CloneForMovie(targetMovie);
 
             try
             {
@@ -189,7 +195,7 @@ namespace Radarr.Api.V3.Indexers
 
             if (movieVersionId is > 0)
             {
-                return _movieVersionService.GetVersionView(movie, movieVersionId.Value) ?? movie;
+                return _movieVersionService.GetVersionView(movie, movieVersionId.Value);
             }
 
             return movie;
@@ -200,10 +206,18 @@ namespace Radarr.Api.V3.Indexers
             var resource = base.MapDecision(decision, initialWeight);
             _remoteMovieCache.Set(GetCacheKey(resource), decision.RemoteMovie, TimeSpan.FromMinutes(30));
 
+            // Retain compatibility with clients that send only indexerId/guid, or override the movie match.
+            _remoteMovieCache.Set(GetReleaseCacheKey(resource), decision.RemoteMovie, TimeSpan.FromMinutes(30));
+
             return resource;
         }
 
         private string GetCacheKey(ReleaseResource resource)
+        {
+            return $"{GetReleaseCacheKey(resource)}_{resource.MovieId ?? resource.MappedMovieId ?? 0}_{resource.MovieVersionId ?? resource.MappedMovieVersionId}";
+        }
+
+        private static string GetReleaseCacheKey(ReleaseResource resource)
         {
             return string.Concat(resource.IndexerId, "_", resource.Guid);
         }

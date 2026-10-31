@@ -1,8 +1,11 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
@@ -28,7 +31,8 @@ namespace NzbDrone.Core.Movies.Versions
         Movie GetMovieForFile(Movie movie, MovieFile movieFile);
         Movie GetVersionView(Movie movie, int movieVersionId);
         MovieVersion Add(MovieVersion version);
-        MovieVersion AddVersion(Movie movie, int qualityProfileId);
+        MovieVersion AddVersion(Movie movie, int qualityProfileId, string name = null, List<int> requiredCustomFormatIds = null);
+        MovieVersion UpdateVersion(int id, string name, int qualityProfileId, List<int> requiredCustomFormatIds);
         void RemoveVersion(int id);
         MovieVersion Update(MovieVersion version);
         void Delete(int id);
@@ -46,20 +50,29 @@ namespace NzbDrone.Core.Movies.Versions
     {
         private readonly IMovieVersionRepository _repository;
         private readonly IMovieRepository _movieRepository;
+        private readonly IMovieService _movieService;
         private readonly IMediaFileRepository _mediaFileRepository;
         private readonly IQualityProfileRepository _qualityProfileRepository;
+        private readonly ICustomFormatService _customFormatService;
+        private readonly IPendingReleaseRepository _pendingReleaseRepository;
         private readonly Logger _logger;
 
         public MovieVersionService(IMovieVersionRepository repository,
                                    IMovieRepository movieRepository,
+                                   IMovieService movieService,
                                    IMediaFileRepository mediaFileRepository,
                                    IQualityProfileRepository qualityProfileRepository,
+                                   ICustomFormatService customFormatService,
+                                   IPendingReleaseRepository pendingReleaseRepository,
                                    Logger logger)
         {
             _repository = repository;
             _movieRepository = movieRepository;
+            _movieService = movieService;
             _mediaFileRepository = mediaFileRepository;
             _qualityProfileRepository = qualityProfileRepository;
+            _customFormatService = customFormatService;
+            _pendingReleaseRepository = pendingReleaseRepository;
             _logger = logger;
         }
 
@@ -112,6 +125,7 @@ namespace NzbDrone.Core.Movies.Versions
         public List<Movie> GetAllVersionViews(Movie movie)
         {
             var baseMovie = movie.IsVersionView ? _movieRepository.Get(movie.Id) : movie;
+            baseMovie.Version = GetPrimary(baseMovie.Id);
 
             var views = new List<Movie> { baseMovie };
             views.AddRange(GetAdditionalVersionViews(baseMovie));
@@ -147,7 +161,7 @@ namespace NzbDrone.Core.Movies.Versions
         }
 
         // The view of an additional version of the movie, or the movie itself for its primary version.
-        // Unknown versions (removed, belonging to another movie or the primary version's own id) fall back to the movie.
+        // Explicit targets must still exist and belong to this movie, including when reloading a cached view.
         public Movie GetVersionView(Movie movie, int movieVersionId)
         {
             if (movie == null)
@@ -155,16 +169,25 @@ namespace NzbDrone.Core.Movies.Versions
                 return null;
             }
 
-            if (movie.IsVersionView && movie.MovieVersionId == movieVersionId)
+            if (movieVersionId == 0)
             {
-                return movie;
+                var primaryMovie = movie.IsVersionView ? _movieRepository.Get(movie.Id) : movie;
+                primaryMovie.Version = GetPrimary(movie.Id);
+                return primaryMovie;
             }
 
             var version = movieVersionId > 0 ? _repository.Find(movieVersionId) : null;
 
-            if (version == null || version.MovieId != movie.Id || !GetAdditionalVersionIds(movie.Id).Contains(version.Id))
+            if (version == null || version.MovieId != movie.Id)
             {
-                return movie.IsVersionView ? _movieRepository.Get(movie.Id) : movie;
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Movie version {0} no longer exists or belongs to another movie. Choose a version before importing", movieVersionId);
+            }
+
+            if (GetPrimary(movie.Id)?.Id == version.Id)
+            {
+                var primaryMovie = movie.IsVersionView ? _movieRepository.Get(movie.Id) : movie;
+                primaryMovie.Version = version;
+                return primaryMovie;
             }
 
             return BuildView(movie, version);
@@ -176,29 +199,70 @@ namespace NzbDrone.Core.Movies.Versions
         }
 
         // Every version is stored in the movie's own folder, next to the files of the other versions
-        public MovieVersion AddVersion(Movie movie, int qualityProfileId)
+        public MovieVersion AddVersion(Movie movie, int qualityProfileId, string name = null, List<int> requiredCustomFormatIds = null)
         {
-            if (_qualityProfileRepository.Find(qualityProfileId) == null)
-            {
-                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Quality profile {0} does not exist", qualityProfileId);
-            }
-
             // Movies added in bulk before versions existed may not have their primary version yet
-            var existing = EnsurePrimary(movie);
-
-            if (existing.Any(v => v.QualityProfileId == qualityProfileId))
-            {
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "{0} already has a version with this quality profile", movie.Title);
-            }
+            var existing = _repository.FindByMovieId(movie.Id);
+            name = name?.Trim();
+            ValidateVersion(existing, 0, name, qualityProfileId, requiredCustomFormatIds);
+            EnsurePrimary(movie);
 
             _logger.Info("Adding version of {0} with quality profile {1}", movie, qualityProfileId);
 
             return _repository.Insert(new MovieVersion
             {
                 MovieId = movie.Id,
+                Name = name,
                 QualityProfileId = qualityProfileId,
+                RequiredCustomFormatIds = requiredCustomFormatIds?.Distinct().ToList() ?? new List<int>(),
                 Path = movie.Path
             });
+        }
+
+        public MovieVersion UpdateVersion(int id, string name, int qualityProfileId, List<int> requiredCustomFormatIds)
+        {
+            var version = _repository.Get(id);
+            name = name?.Trim();
+            ValidateVersion(_repository.FindByMovieId(version.MovieId), id, name, qualityProfileId, requiredCustomFormatIds);
+
+            version.Name = name;
+            version.QualityProfileId = qualityProfileId;
+            version.RequiredCustomFormatIds = requiredCustomFormatIds?.Distinct().ToList() ?? new List<int>();
+
+            if (GetPrimary(version.MovieId).Id == id)
+            {
+                // The primary quality profile remains editable through the existing movie editor.
+                var movie = _movieRepository.Get(version.MovieId);
+                movie.QualityProfileId = qualityProfileId;
+                _movieService.UpdateMovie(movie);
+            }
+
+            return _repository.Update(version);
+        }
+
+        private void ValidateVersion(List<MovieVersion> existing, int id, string name, int qualityProfileId, List<int> requiredCustomFormatIds)
+        {
+            if (name.IsNullOrWhiteSpace() || name.Length > 100)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Version name must contain between 1 and 100 characters");
+            }
+
+            if (existing.Any(v => v.Id != id && string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "This movie already has a version named '{0}'", name);
+            }
+
+            if (_qualityProfileRepository.Find(qualityProfileId) == null)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Quality profile {0} does not exist", qualityProfileId);
+            }
+
+            var knownFormats = (_customFormatService.All() ?? new List<CustomFormat>()).Select(f => f.Id).ToHashSet();
+
+            if (requiredCustomFormatIds?.Any(formatId => !knownFormats.Contains(formatId)) == true)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "One or more required custom formats no longer exist");
+            }
         }
 
         // The primary version can't be removed, and a version keeps its file on disk so it must be deleted first
@@ -217,6 +281,9 @@ namespace NzbDrone.Core.Movies.Versions
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Delete the file of this version before removing it");
             }
 
+            var pending = (_pendingReleaseRepository.AllByMovieId(version.MovieId) ?? new List<PendingRelease>())
+                .Where(p => p.AdditionalInfo?.MovieVersionId == id).Select(p => p.Id).ToList();
+            _pendingReleaseRepository.DeleteMany(pending);
             _repository.Delete(version);
         }
 
@@ -360,6 +427,7 @@ namespace NzbDrone.Core.Movies.Versions
             return new MovieVersion
             {
                 MovieId = movie.Id,
+                Name = "Original",
                 QualityProfileId = movie.QualityProfileId,
                 Path = movie.Path,
                 MovieFileId = movie.MovieFileId

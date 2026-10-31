@@ -12,8 +12,10 @@ import DownloadProtocol from 'DownloadClient/DownloadProtocol';
 import usePrevious from 'Helpers/Hooks/usePrevious';
 import SelectLanguageModal from 'InteractiveImport/Language/SelectLanguageModal';
 import SelectMovieModal from 'InteractiveImport/Movie/SelectMovieModal';
+import SelectMovieVersionModal from 'InteractiveImport/MovieVersion/SelectMovieVersionModal';
 import SelectQualityModal from 'InteractiveImport/Quality/SelectQualityModal';
 import Language from 'Language/Language';
+import useMovieVersions from 'Movie/Details/Versions/useMovieVersions';
 import Movie from 'Movie/Movie';
 import MovieLanguages from 'Movie/MovieLanguages';
 import MovieQuality from 'Movie/MovieQuality';
@@ -30,6 +32,7 @@ import styles from './OverrideMatchModalContent.css';
 type SelectType =
   | 'select'
   | 'movie'
+  | 'movieVersion'
   | 'quality'
   | 'language'
   | 'downloadClient';
@@ -39,6 +42,7 @@ interface OverrideMatchModalContentProps {
   title: string;
   guid: string;
   movieId?: number;
+  movieVersionId?: number;
   languages: Language[];
   quality: QualityModel;
   protocol: DownloadProtocol;
@@ -60,6 +64,15 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
   } = props;
 
   const [movieId, setMovieId] = useState(props.movieId);
+  const [movieVersionId, setMovieVersionId] = useState(
+    props.movieVersionId ?? 0
+  );
+  const { versions } = useMovieVersions(movieId ?? 0);
+  const selectedVersion = versions.find((version) =>
+    version.isPrimary
+      ? movieVersionId === 0 || movieVersionId === version.id
+      : movieVersionId === version.id
+  );
   const [languages, setLanguages] = useState(props.languages);
   const [quality, setQuality] = useState(props.quality);
   const [downloadClientId, setDownloadClientId] = useState<number | null>(null);
@@ -85,9 +98,19 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
     setSelectModalOpen('movie');
   }, [setSelectModalOpen]);
 
+  const onSelectVersionPress = useCallback(
+    () => setSelectModalOpen('movieVersion'),
+    []
+  );
+  const onVersionSelect = useCallback((id: number) => {
+    setMovieVersionId(id);
+    setSelectModalOpen(null);
+  }, []);
+
   const onMovieSelect = useCallback(
     (m: Movie) => {
       setMovieId(m.id);
+      setMovieVersionId(0);
       setSelectModalOpen(null);
     },
     [setMovieId, setSelectModalOpen]
@@ -146,6 +169,7 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
         indexerId,
         guid,
         movieId,
+        movieVersionId,
         quality,
         languages,
         downloadClientId,
@@ -156,6 +180,7 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
     indexerId,
     guid,
     movieId,
+    movieVersionId,
     quality,
     languages,
     downloadClientId,
@@ -192,6 +217,17 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
               <OverrideMatchData
                 value={movie?.title}
                 onPress={onSelectMoviePress}
+              />
+            }
+          />
+
+          <DescriptionListItem
+            className={styles.item}
+            title={translate('Version')}
+            data={
+              <OverrideMatchData
+                value={selectedVersion?.name}
+                onPress={onSelectVersionPress}
               />
             }
           />
@@ -243,6 +279,15 @@ function OverrideMatchModalContent(props: OverrideMatchModalContentProps) {
           ) : null}
         </DescriptionList>
       </ModalBody>
+
+      <SelectMovieVersionModal
+        isOpen={selectModalOpen === 'movieVersion'}
+        movieVersionId={selectedVersion?.isPrimary ? 0 : movieVersionId}
+        movieVersions={versions}
+        modalTitle={modalTitle}
+        onMovieVersionSelect={onVersionSelect}
+        onModalClose={onSelectModalClose}
+      />
 
       <ModalFooter className={styles.footer}>
         <div className={styles.error}>{error || grabError}</div>

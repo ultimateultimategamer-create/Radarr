@@ -7,6 +7,7 @@ using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.MediaFiles.MovieImport.Aggregation;
@@ -156,18 +157,22 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport.Manual
         }
 
         [Test]
-        public void should_import_into_the_movie_when_version_is_unknown()
+        public void should_reject_an_unknown_version_without_importing_into_the_primary_version()
         {
-            Subject.Execute(new ManualImportCommand
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.GetVersionView(_movie, 99))
+                  .Throws(new NzbDroneClientException(System.Net.HttpStatusCode.Conflict, "Removed version"));
+
+            Assert.Throws<NzbDroneClientException>(() => Subject.Execute(new ManualImportCommand
             {
                 Files = new List<ManualImportFile>
                 {
                     new ManualImportFile { Path = @"C:\Downloads\Movie.2022.1080p.mkv".AsOsAgnostic(), MovieId = 1, MovieVersionId = 99, Quality = new QualityModel(Quality.Bluray1080p) }
                 }
-            });
+            }));
 
             Mocker.GetMock<IImportApprovedMovie>()
-                  .Verify(v => v.Import(It.Is<List<ImportDecision>>(d => d.Single().LocalMovie.Movie == _movie), true, null, It.IsAny<ImportMode>()), Times.Once());
+                  .Verify(v => v.Import(It.IsAny<List<ImportDecision>>(), It.IsAny<bool>(), It.IsAny<DownloadClientItem>(), It.IsAny<ImportMode>()), Times.Never());
         }
     }
 }

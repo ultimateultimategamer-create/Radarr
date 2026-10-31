@@ -63,6 +63,10 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport
                   .Setup(s => s.UpgradeMovieFile(It.IsAny<MovieFile>(), It.IsAny<LocalMovie>(), It.IsAny<bool>()))
                   .Returns(new MovieFileMoveResult());
 
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.GetVersionView(It.IsAny<Movie>(), It.IsAny<int>()))
+                  .Returns<Movie, int>((m, id) => m);
+
             Mocker.GetMock<IHistoryService>()
                 .Setup(x => x.FindByDownloadId(It.IsAny<string>()))
                 .Returns(new List<MovieHistory>());

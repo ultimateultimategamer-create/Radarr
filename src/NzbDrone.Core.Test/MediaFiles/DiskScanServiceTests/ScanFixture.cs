@@ -13,6 +13,9 @@ using NzbDrone.Core.MediaFiles.MovieImport;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Versions;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Test.Framework;
 using NzbDrone.Test.Common;
@@ -532,6 +535,51 @@ namespace NzbDrone.Core.Test.MediaFiles.DiskScanServiceTests
 
             Mocker.GetMock<IMediaFileTableCleanupService>()
                   .Verify(v => v.Clean(It.Is<Movie>(m => m.IsVersionView), It.IsAny<List<string>>()), Times.Never());
+        }
+
+        [Test]
+        public void should_finish_scanning_all_versions_before_publishing_the_event_used_to_assign_extras()
+        {
+            GivenMovieFolder();
+            GivenFiles(new List<string>());
+            GivenAdditionalVersion(_movie.Path);
+            var additionalScanned = false;
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Setup(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.Is<Movie>(m => m.IsVersionView), false))
+                  .Callback(() => additionalScanned = true)
+                  .Returns(new List<ImportDecision>());
+            Mocker.GetMock<IEventAggregator>()
+                  .Setup(s => s.PublishEvent(It.IsAny<MovieScannedEvent>()))
+                  .Callback<MovieScannedEvent>(e => Assert.That(additionalScanned, Is.True));
+
+            Subject.Scan(_movie);
+        }
+
+        [Test]
+        public void should_assign_a_shared_folder_file_to_the_version_whose_quality_profile_allows_it()
+        {
+            GivenMovieFolder();
+            GivenFiles(new[] { Path.Combine(_movie.Path, "Movie.2160p.mkv") });
+            _movie.QualityProfile = new QualityProfile
+            {
+                Items = new List<QualityProfileQualityItem> { new QualityProfileQualityItem { Quality = Quality.Bluray1080p, Allowed = true } }
+            };
+            var version = GivenAdditionalVersion(_movie.Path);
+            version.QualityProfile = new QualityProfile
+            {
+                Items = new List<QualityProfileQualityItem> { new QualityProfileQualityItem { Quality = Quality.Bluray2160p, Allowed = true } }
+            };
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Setup(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.IsAny<Movie>(), false))
+                  .Returns<List<string>, Movie, bool>((paths, movie, filter) => paths.Select(path =>
+                      new ImportDecision(new LocalMovie { Movie = movie, Path = path, Quality = new QualityModel(Quality.Bluray2160p) })).ToList());
+
+            Subject.Scan(_movie);
+
+            Mocker.GetMock<IImportApprovedMovie>()
+                  .Verify(s => s.Import(It.Is<List<ImportDecision>>(d => d.Count == 1 && d[0].LocalMovie.Movie.MovieVersionId == 7), false, null, ImportMode.Auto), Times.Once());
+            Mocker.GetMock<IImportApprovedMovie>()
+                  .Verify(s => s.Import(It.Is<List<ImportDecision>>(d => d.Count > 0 && d[0].LocalMovie.Movie.MovieVersionId == 0), false, null, ImportMode.Auto), Times.Never());
         }
 
         [Test]

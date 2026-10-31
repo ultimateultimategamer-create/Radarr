@@ -81,17 +81,31 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Scan(Movie movie)
         {
-            // Additional versions can live in other root folders, each one is scanned on its own
+            movie.Version = _movieVersionService.GetPrimary(movie.Id);
+
+            // Scan each version, while assigning shared-folder files only when their rules identify a single target.
             var versions = new List<Movie> { movie };
             versions.AddRange(_movieVersionService.GetAdditionalVersionViews(movie));
+            List<string> primaryExtraFiles = null;
 
             foreach (var version in versions)
             {
-                ScanVersion(version, versions);
+                var extraFiles = ScanVersion(version, versions);
+
+                if (!version.IsVersionView)
+                {
+                    primaryExtraFiles = extraFiles;
+                }
+            }
+
+            // Extras must see every version's imported file before assigning subtitles and metadata.
+            if (primaryExtraFiles != null)
+            {
+                CompletedScanning(movie, primaryExtraFiles);
             }
         }
 
-        private void ScanVersion(Movie movie, List<Movie> allVersions)
+        private List<string> ScanVersion(Movie movie, List<Movie> allVersions)
         {
             var rootFolder = _rootFolderService.GetBestRootFolderPath(movie.Path);
 
@@ -103,14 +117,14 @@ namespace NzbDrone.Core.MediaFiles
                 {
                     _logger.Warn("Movie's root folder ({0}) doesn't exist.", rootFolder);
                     PublishScanSkipped(movie, MovieScanSkippedReason.RootFolderDoesNotExist);
-                    return;
+                    return null;
                 }
 
                 if (_diskProvider.FolderEmpty(rootFolder))
                 {
                     _logger.Warn("Movie's root folder ({0}) is empty. Rescan will not update movies as a failsafe.", rootFolder);
                     PublishScanSkipped(movie, MovieScanSkippedReason.RootFolderIsEmpty);
-                    return;
+                    return null;
                 }
             }
 
@@ -138,9 +152,8 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 CleanMediaFiles(movie, new List<string>());
-                CompletedScanning(movie, new List<string>());
 
-                return;
+                return new List<string>();
             }
 
             var videoFilesStopwatch = Stopwatch.StartNew();
@@ -163,6 +176,20 @@ namespace NzbDrone.Core.MediaFiles
 
             var decisionsStopwatch = Stopwatch.StartNew();
             var decisions = _importDecisionMaker.GetImportDecisions(unmappedFiles, movie, false);
+
+            if (allVersions.Count(v => v.Path.PathEquals(movie.Path)) > 1 && decisions != null)
+            {
+                decisions = decisions.Where(decision =>
+                {
+                    var matches = MovieVersionMatcher.BestMatches(
+                        allVersions.Where(v => v.Path.PathEquals(movie.Path)),
+                        decision.LocalMovie.Quality.Quality,
+                        decision.LocalMovie.CustomFormats);
+
+                    return matches.Count == 1 && matches[0].MovieVersionId == movie.MovieVersionId;
+                }).ToList();
+            }
+
             decisionsStopwatch.Stop();
             _logger.Trace("Import decisions complete for: {0} [{1}]", movie, decisionsStopwatch.Elapsed);
             _importApprovedMovies.Import(decisions, false);
@@ -202,7 +229,7 @@ namespace NzbDrone.Core.MediaFiles
             var possibleExtraFiles = FilterPaths(movie.Path, filesOnDisk);
 
             RemoveEmptyMovieFolder(movie.Path);
-            CompletedScanning(movie, possibleExtraFiles);
+            return possibleExtraFiles;
         }
 
         private void CleanMediaFiles(Movie movie, List<string> mediaFileList)

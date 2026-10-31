@@ -4,6 +4,7 @@ using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Movies;
@@ -93,6 +94,19 @@ namespace NzbDrone.Core.Test.Download.TrackedDownloads
             var trackedDownload = Subject.TrackDownload(_client, _item);
 
             trackedDownload.RemoteMovie.Movie.MovieVersionId.Should().Be(7);
+        }
+
+        [Test]
+        public void should_require_manual_import_when_the_grabbed_version_has_been_removed()
+        {
+            GivenGrabHistory("7");
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.GetVersionView(It.IsAny<Movie>(), 7))
+                  .Throws(new NzbDroneClientException(System.Net.HttpStatusCode.Conflict, "Removed version"));
+
+            var trackedDownload = Subject.TrackDownload(_client, _item);
+
+            trackedDownload.RemoteMovie.Movie.Should().BeNull();
         }
 
         [Test]

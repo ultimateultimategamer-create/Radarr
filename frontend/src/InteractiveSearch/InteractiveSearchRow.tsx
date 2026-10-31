@@ -14,7 +14,6 @@ import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import MovieFormats from 'Movie/MovieFormats';
 import MovieLanguages from 'Movie/MovieLanguages';
 import MovieQuality from 'Movie/MovieQuality';
-import QualityProfileName from 'Settings/Profiles/Quality/QualityProfileName';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import Release from 'typings/Release';
 import formatDateTime from 'Utilities/Date/formatDateTime';
@@ -72,7 +71,7 @@ function getDownloadTooltip(
 }
 
 interface InteractiveSearchRowProps extends Release {
-  versionQualityProfileId?: number;
+  versionName?: string;
   searchPayload: InteractiveSearchPayload;
   onGrabPress(...args: unknown[]): void;
 }
@@ -98,13 +97,14 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     customFormatScore,
     customFormats,
     mappedMovieId,
+    mappedMovieVersionId = 0,
     indexerFlags = [],
     rejections = [],
     downloadAllowed,
     isGrabbing = false,
     isGrabbed = false,
     grabError,
-    versionQualityProfileId,
+    versionName,
     searchPayload,
     onGrabPress,
   } = props;
@@ -129,6 +129,8 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
       onGrabPress({
         guid,
         indexerId,
+        movieId: searchPayload.movieId,
+        movieVersionId: searchPayload.movieVersionId ?? mappedMovieVersionId,
       });
 
       return;
@@ -139,6 +141,8 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     guid,
     indexerId,
     downloadAllowed,
+    searchPayload,
+    mappedMovieVersionId,
     onGrabPress,
     setIsConfirmGrabModalOpen,
   ]);
@@ -150,8 +154,16 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
       guid,
       indexerId,
       ...searchPayload,
+      movieVersionId: searchPayload.movieVersionId ?? mappedMovieVersionId,
     });
-  }, [guid, indexerId, searchPayload, onGrabPress, setIsConfirmGrabModalOpen]);
+  }, [
+    guid,
+    indexerId,
+    searchPayload,
+    mappedMovieVersionId,
+    onGrabPress,
+    setIsConfirmGrabModalOpen,
+  ]);
 
   const onGrabCancel = useCallback(() => {
     setIsConfirmGrabModalOpen(false);
@@ -186,12 +198,12 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
             {title}
           </Link>
 
-          {versionQualityProfileId ? (
+          {versionName ? (
             <Label
               kind={kinds.INFO}
               title={translate('MovieVersionReleaseTooltip')}
             >
-              <QualityProfileName qualityProfileId={versionQualityProfileId} />
+              {versionName}
             </Label>
           ) : null}
         </div>
@@ -355,7 +367,8 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
         title={title}
         indexerId={indexerId}
         guid={guid}
-        movieId={mappedMovieId}
+        movieId={mappedMovieId ?? searchPayload.movieId}
+        movieVersionId={searchPayload.movieVersionId ?? mappedMovieVersionId}
         languages={languages}
         quality={quality}
         protocol={protocol}

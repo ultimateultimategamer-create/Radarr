@@ -75,5 +75,19 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
         {
             Mocker.GetMock<IPendingReleaseRepository>().Verify(c => c.DeleteMany(It.Is<IEnumerable<int>>(s => s.SequenceEqual(ids))));
         }
+
+        [Test]
+        public void should_keep_pending_releases_for_other_versions()
+        {
+            AddPending(1, "Movie", 2001);
+            AddPending(2, "Movie", 2001);
+            _pending[1].AdditionalInfo = new PendingReleaseAdditionalInfo { MovieVersionId = 7 };
+
+            var queueId = HashConverter.GetHashInt31(string.Format("pending-{0}-movie{1}", 1, _movie.Id));
+
+            Subject.RemovePendingQueueItems(queueId);
+
+            AssertRemoved(1);
+        }
     }
 }

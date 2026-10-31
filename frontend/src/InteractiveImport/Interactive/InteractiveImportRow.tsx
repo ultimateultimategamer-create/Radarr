@@ -23,7 +23,6 @@ import MovieFormats from 'Movie/MovieFormats';
 import MovieLanguages from 'Movie/MovieLanguages';
 import MovieQuality from 'Movie/MovieQuality';
 import { QualityModel } from 'Quality/Quality';
-import QualityProfileName from 'Settings/Profiles/Quality/QualityProfileName';
 import {
   reprocessInteractiveImportItems,
   updateInteractiveImportItem,
@@ -342,11 +341,7 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
           }
           onPress={onSelectMovieVersionPress}
         >
-          {movieVersion ? (
-            <QualityProfileName
-              qualityProfileId={movieVersion.qualityProfileId}
-            />
-          ) : null}
+          {movieVersion?.name ?? null}
         </TableRowCellButton>
       ) : null}
 

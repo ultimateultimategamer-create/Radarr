@@ -144,15 +144,15 @@ function InteractiveSearch({ searchPayload }: InteractiveSearchProps) {
   const { versions } = useMovieVersions(searchPayload.movieId);
 
   // Without a version to search for, each release is matched to the first version of the movie that wants it
-  const versionQualityProfileIds = useMemo(() => {
-    const result: Record<number, number> = {};
+  const versionNames = useMemo(() => {
+    const result: Record<number, string> = {};
 
     if (versions.length < 2 || searchPayload.movieVersionId) {
       return result;
     }
 
     versions.forEach((version) => {
-      result[version.isPrimary ? 0 : version.id] = version.qualityProfileId;
+      result[version.isPrimary ? 0 : version.id] = version.name;
     });
 
     return result;
@@ -250,9 +250,7 @@ function InteractiveSearch({ searchPayload }: InteractiveSearchProps) {
                 <InteractiveSearchRow
                   key={`${item.indexerId}-${item.guid}`}
                   {...item}
-                  versionQualityProfileId={
-                    versionQualityProfileIds[item.mappedMovieVersionId ?? 0]
-                  }
+                  versionName={versionNames[item.mappedMovieVersionId ?? 0]}
                   searchPayload={searchPayload}
                   onGrabPress={handleGrabPress}
                 />

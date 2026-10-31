@@ -51,7 +51,7 @@ function SelectMovieVersionModalContent({
 
       return {
         key: getMovieVersionKey(version),
-        value: profile?.name ?? translate('Unknown'),
+        value: `${version.name} (${profile?.name ?? translate('Unknown')})`,
         hint: version.isPrimary ? translate('PrimaryVersion') : undefined,
       };
     });

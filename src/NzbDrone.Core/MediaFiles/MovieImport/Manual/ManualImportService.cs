@@ -443,7 +443,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
         // The movie itself, or the view of one of its additional versions
         private Movie GetMovieForVersion(Movie movie, int movieVersionId)
         {
-            if (movie == null || movieVersionId <= 0 || !_movieVersionService.GetAdditionalVersionIds(movie.Id).Contains(movieVersionId))
+            if (movie == null || movieVersionId == 0)
             {
                 return movie;
             }
