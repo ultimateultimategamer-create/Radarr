@@ -240,9 +240,14 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
                   .Setup(s => s.FindByMovieId(_movie.Id))
                   .Returns(new List<MovieVersion>());
 
+            // The repository gives the primary version it creates an id
             Mocker.GetMock<IMovieVersionRepository>()
                   .Setup(s => s.Insert(It.IsAny<MovieVersion>()))
-                  .Returns<MovieVersion>(v => v);
+                  .Returns<MovieVersion>(v =>
+                  {
+                      v.Id = 1;
+                      return v;
+                  });
 
             Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 4, "original"));
 
