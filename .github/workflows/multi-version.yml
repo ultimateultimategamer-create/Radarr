@@ -27,6 +27,8 @@ jobs:
         run: dotnet build src/Radarr.sln -c Debug -p:Platform=Posix
 
       - name: Unit tests
+        id: tests
+        continue-on-error: true
         env:
           RADARR_TESTS_LOG_OUTPUT: File
         run: |
@@ -40,7 +42,15 @@ jobs:
             fi
           done
           echo "Testing:$ASSEMBLIES"
-          dotnet test $ASSEMBLIES --filter "$FILTER" --logger "trx;LogFileName=results.trx" --results-directory TestResults
+          dotnet test $ASSEMBLIES --filter "$FILTER" --logger trx --results-directory TestResults
+
+      - name: Report failed tests
+        if: always()
+        run: python3 .github/scripts/report-test-failures.py TestResults
+
+      - name: Fail when tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
 
       - name: Upload test results
         if: always()
