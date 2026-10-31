@@ -1,0 +1,79 @@
+name: Multi-version build and tests
+
+on:
+  push:
+    branches:
+      - multi-version
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build
+        run: dotnet build src/Radarr.sln -c Debug -p:Platform=Posix
+
+      - name: Unit tests
+        env:
+          RADARR_TESTS_LOG_OUTPUT: File
+        run: |
+          mkdir -p ~/.config/Radarr
+          FILTER="Category!=ManualTest&Category!=WINDOWS&Category!=IntegrationTest&Category!=AutomationTest"
+          ASSEMBLIES=""
+          for name in Radarr.Core.Test Radarr.Api.Test Radarr.Common.Test; do
+            dll=$(find _tests -name "$name.dll" -not -path "*/ref/*" | head -1)
+            if [ -n "$dll" ]; then
+              ASSEMBLIES="$ASSEMBLIES $dll"
+            fi
+          done
+          echo "Testing:$ASSEMBLIES"
+          dotnet test $ASSEMBLIES --filter "$FILTER" --logger "trx;LogFileName=results.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: |
+            TestResults
+            TestLog.txt
+          if-no-files-found: ignore
+
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Install
+        run: yarn install --frozen-lockfile --network-timeout 120000
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Stylelint
+        run: yarn stylelint-linux
+
+      - name: Build (includes TypeScript checks)
+        run: yarn run build --env production
