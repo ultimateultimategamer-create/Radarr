@@ -8,6 +8,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Movies;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
@@ -160,6 +161,29 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
         public void should_add_if_publish_date_is_different()
         {
             GivenHeldRelease(_release.Title, _release.Indexer, _release.PublishDate.AddHours(1));
+
+            Subject.Add(_temporarilyRejected, PendingReleaseReason.Delay);
+
+            VerifyInsert();
+        }
+
+        [Test]
+        public void should_store_the_version_the_release_is_pending_for()
+        {
+            _remoteMovie.Movie = _movie.ForVersion(new MovieVersion { Id = 7, MovieId = _movie.Id, Path = _movie.Path });
+
+            Subject.Add(_temporarilyRejected, PendingReleaseReason.Delay);
+
+            Mocker.GetMock<IPendingReleaseRepository>()
+                .Verify(v => v.Insert(It.Is<PendingRelease>(p => p.AdditionalInfo.MovieVersionId == 7)), Times.Once());
+        }
+
+        [Test]
+        public void should_add_the_same_release_for_another_version()
+        {
+            GivenHeldRelease(_release.Title, _release.Indexer, _release.PublishDate);
+
+            _remoteMovie.Movie = _movie.ForVersion(new MovieVersion { Id = 7, MovieId = _movie.Id, Path = _movie.Path });
 
             Subject.Add(_temporarilyRejected, PendingReleaseReason.Delay);
 
