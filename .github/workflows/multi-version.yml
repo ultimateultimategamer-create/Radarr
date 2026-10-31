@@ -5,6 +5,7 @@ on:
     branches:
       - multi-version
       - codex/named-movie-versions
+      - pinned-versions
   pull_request:
     branches:
       - multi-version

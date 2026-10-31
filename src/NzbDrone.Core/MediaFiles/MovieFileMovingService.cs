@@ -105,11 +105,12 @@ namespace NzbDrone.Core.MediaFiles
             return TransferFile(movieFile, localMovie.Movie, filePath, TransferMode.Copy, localMovie);
         }
 
-        // The versions of a movie share its folder, a file never takes the name of another version's file
+        // The versions of a movie share its folder: additional versions are named after the folder and the version,
+        // and a file never takes the name of another version's file
         private string BuildFileName(Movie movie, MovieFile movieFile, List<CustomFormat> customFormats = null)
         {
             var fileName = _buildFileNames.BuildFileName(movie, movieFile, null, customFormats);
-            var uniqueFileName = _movieVersionFileNameService.GetUniqueFileName(movie, movieFile, fileName);
+            var uniqueFileName = _movieVersionFileNameService.GetFileName(movie, movieFile, fileName);
 
             return uniqueFileName.IsNullOrWhiteSpace() ? fileName : uniqueFileName;
         }

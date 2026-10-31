@@ -4,6 +4,7 @@ interface MovieVersion {
   name: string;
   qualityProfileId: number;
   requiredCustomFormatIds: number[];
+  pinned: boolean;
   path: string;
   movieFileId: number;
   hasFile: boolean;

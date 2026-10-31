@@ -7,6 +7,7 @@ using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.MovieImport;
@@ -14,6 +15,7 @@ using NzbDrone.Core.MediaFiles.MovieImport.Aggregation;
 using NzbDrone.Core.MediaFiles.MovieImport.Manual;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Versions;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
@@ -139,6 +141,39 @@ namespace NzbDrone.Core.Test.MediaFiles.MovieImport.Manual
 
             items.Should().ContainSingle();
             items.Single().MovieVersionId.Should().Be(0);
+        }
+
+        [Test]
+        public void should_list_a_download_under_the_version_it_was_grabbed_for()
+        {
+            var downloadFolder = @"C:\Downloads\Movie.2022.2160p.UHD.BluRay".AsOsAgnostic();
+            var file = Path.Combine(downloadFolder, "Movie.2022.2160p.UHD.BluRay.mkv");
+
+            Mocker.GetMock<ITrackedDownloadService>()
+                  .Setup(s => s.Find("download"))
+                  .Returns(new TrackedDownload
+                  {
+                      DownloadItem = new DownloadClientItem(),
+                      ImportItem = new DownloadClientItem { OutputPath = new OsPath(downloadFolder) },
+                      RemoteMovie = new RemoteMovie { Movie = _versionView }
+                  });
+
+            // The folder name alone matches the movie itself
+            Mocker.GetMock<IParsingService>()
+                  .Setup(s => s.GetMovie(It.IsAny<string>()))
+                  .Returns(_movie);
+
+            GivenVideoFiles(downloadFolder, file);
+
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Setup(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.IsAny<Movie>(), It.IsAny<DownloadClientItem>(), It.IsAny<ParsedMovieInfo>(), It.IsAny<bool>(), It.IsAny<bool>()))
+                  .Returns<List<string>, Movie, DownloadClientItem, ParsedMovieInfo, bool, bool>((paths, movie, item, info, sceneSource, filter) =>
+                      paths.Select(p => new ImportDecision(new LocalMovie { Movie = movie, Path = p, Quality = new QualityModel(Quality.Bluray2160p) })).ToList());
+
+            var items = Subject.GetMediaFiles(downloadFolder, "download", null, true);
+
+            items.Should().ContainSingle();
+            items.Single().MovieVersionId.Should().Be(7);
         }
 
         [Test]

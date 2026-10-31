@@ -11,6 +11,7 @@ namespace Radarr.Api.V3.MovieVersions
         public string Name { get; set; }
         public int QualityProfileId { get; set; }
         public List<int> RequiredCustomFormatIds { get; set; } = new List<int>();
+        public bool Pinned { get; set; }
         public string Path { get; set; }
         public int MovieFileId { get; set; }
         public bool HasFile { get; set; }
@@ -33,6 +34,7 @@ namespace Radarr.Api.V3.MovieVersions
                 Name = model.Name,
                 QualityProfileId = model.QualityProfileId,
                 RequiredCustomFormatIds = model.RequiredCustomFormatIds ?? new List<int>(),
+                Pinned = model.Pinned,
                 Path = model.Path,
                 MovieFileId = model.MovieFileId,
                 HasFile = model.HasFile,

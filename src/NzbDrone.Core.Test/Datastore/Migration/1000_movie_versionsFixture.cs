@@ -10,9 +10,9 @@ using NzbDrone.Core.Test.Framework;
 namespace NzbDrone.Core.Test.Datastore.Migration
 {
     [TestFixture]
-    public class add_movie_versionsFixture : MigrationTest<add_movie_versions>
+    public class movie_versionsFixture : MigrationTest<movie_versions>
     {
-        private void InsertMovie(add_movie_versions c, int metadataId, int qualityProfileId, string path, int movieFileId)
+        private void InsertMovie(movie_versions c, int metadataId, int qualityProfileId, string path, int movieFileId)
         {
             c.Insert.IntoTable("Movies").Row(new
             {
@@ -27,7 +27,7 @@ namespace NzbDrone.Core.Test.Datastore.Migration
             });
         }
 
-        private void InsertMovieFile(add_movie_versions c, int movieId)
+        private void InsertMovieFile(movie_versions c, int movieId)
         {
             c.Insert.IntoTable("MovieFiles").Row(new
             {
@@ -42,7 +42,7 @@ namespace NzbDrone.Core.Test.Datastore.Migration
         }
 
         [Test]
-        public void should_create_a_version_for_each_movie()
+        public void should_create_a_primary_version_named_original_for_each_movie()
         {
             var db = WithMigrationTestDb(c =>
             {
@@ -50,10 +50,11 @@ namespace NzbDrone.Core.Test.Datastore.Migration
                 InsertMovie(c, 2, 3, "/Movies/Movie Two (2021)", 0);
             });
 
-            var movies = db.Query<Movie244>("SELECT \"Id\", \"Path\" FROM \"Movies\"");
-            var versions = db.Query<MovieVersion244>("SELECT * FROM \"MovieVersions\"");
+            var movies = db.Query<Movie1000>("SELECT \"Id\", \"Path\" FROM \"Movies\"");
+            var versions = db.Query<MovieVersion1000>("SELECT * FROM \"MovieVersions\"");
 
             versions.Should().HaveCount(2);
+            versions.Should().OnlyContain(v => v.Name == "Original" && !v.Pinned && v.RequiredCustomFormatIds == "[]");
 
             var first = versions.Single(v => v.MovieId == movies.Single(m => m.Path == "/Movies/Movie One (2020)").Id);
             first.QualityProfileId.Should().Be(2);
@@ -74,28 +75,31 @@ namespace NzbDrone.Core.Test.Datastore.Migration
                 InsertMovieFile(c, 1);
             });
 
-            var files = db.Query<MovieFile244>("SELECT \"Id\", \"MovieVersionId\" FROM \"MovieFiles\"");
+            var files = db.Query<MovieFile1000>("SELECT \"Id\", \"MovieVersionId\" FROM \"MovieFiles\"");
 
             files.Single().MovieVersionId.Should().Be(0);
         }
     }
 
-    public class Movie244
+    public class Movie1000
     {
         public int Id { get; set; }
         public string Path { get; set; }
     }
 
-    public class MovieVersion244
+    public class MovieVersion1000
     {
         public int Id { get; set; }
         public int MovieId { get; set; }
+        public string Name { get; set; }
         public int QualityProfileId { get; set; }
+        public string RequiredCustomFormatIds { get; set; }
+        public bool Pinned { get; set; }
         public string Path { get; set; }
         public int MovieFileId { get; set; }
     }
 
-    public class MovieFile244
+    public class MovieFile1000
     {
         public int Id { get; set; }
         public int MovieVersionId { get; set; }

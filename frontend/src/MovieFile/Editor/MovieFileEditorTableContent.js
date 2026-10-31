@@ -8,18 +8,21 @@ import translate from 'Utilities/String/translate';
 import MovieFileEditorRow from './MovieFileEditorRow';
 import styles from './MovieFileEditorTableContent.css';
 
-// Files carry the id of their additional version, 0 for the movie's primary version
+// The movie's own files are listed as usual, each additional version follows with a header and its file.
+// Files carry the id of their additional version, 0 for the movie's primary version.
 function groupFilesByVersion(items, versions) {
-  const primary = versions.find((version) => version.isPrimary) ?? versions[0];
+  const additionalVersions = versions.filter((version) => !version.isPrimary);
+  const additionalIds = additionalVersions.map((version) => version.id);
 
-  return versions.map((version) => {
-    const movieVersionId = version.id === primary.id ? 0 : version.id;
-
-    return {
-      version,
-      files: items.filter((item) => (item.movieVersionId ?? 0) === movieVersionId)
-    };
-  });
+  return {
+    primaryFiles: items.filter((item) => !additionalIds.includes(item.movieVersionId ?? 0)),
+    versionGroups: additionalVersions.map((version) => {
+      return {
+        version,
+        files: items.filter((item) => item.movieVersionId === version.id)
+      };
+    })
+  };
 }
 
 class MovieFileEditorTableContent extends Component {
@@ -50,8 +53,10 @@ class MovieFileEditorTableContent extends Component {
       onRemoveVersionPress
     } = this.props;
 
-    // With several versions, show each version's files under a header with its quality profile and path
-    const groups = versions && versions.length > 0 ? groupFilesByVersion(items, versions) : null;
+    // A movie without additional versions looks exactly as usual
+    const groups = versions && versions.some((version) => !version.isPrimary) ?
+      groupFilesByVersion(items, versions) :
+      null;
 
     return (
       <div>
@@ -74,17 +79,20 @@ class MovieFileEditorTableContent extends Component {
               <TableBody>
                 {
                   groups ?
-                    groups.map(({ version, files }) => {
-                      return [
-                        <MovieVersionHeaderRow
-                          key={`version-${version.id}`}
-                          version={version}
-                          colSpan={columns.filter((column) => column.isVisible).length}
-                          onRemovePress={onRemoveVersionPress}
-                        />,
-                        ...files.map(this.renderRow)
-                      ];
-                    }) :
+                    [
+                      ...groups.primaryFiles.map(this.renderRow),
+                      ...groups.versionGroups.map(({ version, files }) => {
+                        return [
+                          <MovieVersionHeaderRow
+                            key={`version-${version.id}`}
+                            version={version}
+                            colSpan={columns.filter((column) => column.isVisible).length}
+                            onRemovePress={onRemoveVersionPress}
+                          />,
+                          ...files.map(this.renderRow)
+                        ];
+                      })
+                    ] :
                     items.map(this.renderRow)
                 }
               </TableBody>

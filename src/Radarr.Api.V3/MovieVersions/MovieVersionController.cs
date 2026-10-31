@@ -47,6 +47,13 @@ namespace Radarr.Api.V3.MovieVersions
         public Results<Created<MovieVersionResource>, NotFound> AddMovieVersion([FromBody] MovieVersionResource resource)
         {
             var movie = _movieService.GetMovie(resource.MovieId);
+
+            // A pinned version is added by hand, for a file the user then picks for it
+            if (resource.Pinned)
+            {
+                return Created(_movieVersionService.AddPinnedVersion(movie, resource.Name).Id);
+            }
+
             var version = _movieVersionService.AddVersion(movie, resource.QualityProfileId, resource.Name, resource.RequiredCustomFormatIds);
 
             // Pick up files already present in the movie's folder that this version wants

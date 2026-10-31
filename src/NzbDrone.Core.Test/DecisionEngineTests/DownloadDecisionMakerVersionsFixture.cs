@@ -94,6 +94,20 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         }
 
         [Test]
+        public void should_leave_pinned_versions_out_of_automatic_decisions()
+        {
+            GivenPrimaryVersionAccepts(true);
+            GivenAdditionalVersionAccepts(true);
+            _versionView.Version.Pinned = true;
+
+            var decisions = Subject.GetRssDecision(_reports);
+
+            decisions.Should().ContainSingle();
+            decisions.Single().RemoteMovie.Movie.MovieVersionId.Should().Be(0);
+            _spec.Verify(s => s.IsSatisfiedBy(It.Is<RemoteMovie>(m => m.Movie.MovieVersionId == 7), It.IsAny<ReleaseDecisionInformation>()), Times.Never());
+        }
+
+        [Test]
         public void should_run_standard_checks_even_when_a_version_does_not_match()
         {
             GivenPrimaryVersionAccepts(true);

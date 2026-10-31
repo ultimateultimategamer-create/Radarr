@@ -227,8 +227,132 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         [Test]
         public void should_not_add_version_with_unknown_quality_profile()
         {
-            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion>());
+            GivenPrimaryVersion();
             Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 42, "Unknown profile"));
+        }
+
+        [Test]
+        public void should_check_a_new_version_name_against_the_primary_version_it_creates()
+        {
+            GivenQualityProfile(4);
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion>());
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.Insert(It.IsAny<MovieVersion>()))
+                  .Returns<MovieVersion>(v => v);
+
+            Assert.Throws<NzbDroneClientException>(() => Subject.AddVersion(_movie, 4, "original"));
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.Insert(It.Is<MovieVersion>(m => m.QualityProfileId == 4)), Times.Never());
+        }
+
+        [Test]
+        public void should_add_pinned_version_in_the_movie_folder_with_the_movie_profile()
+        {
+            GivenPrimaryVersion();
+            GivenQualityProfile(_movie.QualityProfileId);
+
+            Subject.AddPinnedVersion(_movie, " Director's Cut ");
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.Insert(It.Is<MovieVersion>(m => m.MovieId == _movie.Id &&
+                                                                 m.Name == "Director's Cut" &&
+                                                                 m.Pinned &&
+                                                                 m.QualityProfileId == _movie.QualityProfileId &&
+                                                                 m.RequiredCustomFormatIds.Count == 0 &&
+                                                                 m.Path == _movie.Path)),
+                          Times.Once());
+        }
+
+        [Test]
+        public void should_name_pinned_version_after_the_suggestion_when_no_name_is_given()
+        {
+            GivenPrimaryVersion();
+            GivenQualityProfile(_movie.QualityProfileId);
+
+            Subject.AddPinnedVersion(_movie, null, "IMAX");
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.Insert(It.Is<MovieVersion>(m => m.Name == "IMAX" && m.Pinned)), Times.Once());
+        }
+
+        [Test]
+        public void should_number_the_suggested_name_when_another_version_uses_it()
+        {
+            GivenQualityProfile(_movie.QualityProfileId);
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion>
+                  {
+                      new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original" },
+                      new MovieVersion { Id = 7, MovieId = _movie.Id, Name = "Bluray-2160p", Pinned = true },
+                      new MovieVersion { Id = 8, MovieId = _movie.Id, Name = "bluray-2160p 2", Pinned = true }
+                  });
+
+            Subject.AddPinnedVersion(_movie, "", "Bluray-2160p");
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.Insert(It.Is<MovieVersion>(m => m.Name == "Bluray-2160p 3")), Times.Once());
+        }
+
+        [Test]
+        public void should_not_add_a_pinned_version_with_a_name_already_used()
+        {
+            GivenQualityProfile(_movie.QualityProfileId);
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion>
+                  {
+                      new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original" },
+                      new MovieVersion { Id = 7, MovieId = _movie.Id, Name = "IMAX", Pinned = true }
+                  });
+
+            Assert.Throws<NzbDroneClientException>(() => Subject.AddPinnedVersion(_movie, "imax", "Bluray-2160p"));
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.Insert(It.IsAny<MovieVersion>()), Times.Never());
+        }
+
+        [Test]
+        public void should_remove_pinned_version_when_its_file_is_deleted()
+        {
+            var pinned = new MovieVersion { Id = 7, MovieId = _movie.Id, MovieFileId = 42, Pinned = true };
+            var movieFile = new MovieFile { Id = 42, MovieId = _movie.Id, MovieVersionId = 7 };
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion> { new MovieVersion { Id = 1, MovieId = _movie.Id, MovieFileId = 10 }, pinned });
+
+            Subject.Handle(new MovieFileDeletedEvent(movieFile, DeleteMediaFileReason.Manual));
+
+            Mocker.GetMock<IMovieVersionRepository>().Verify(v => v.Delete(pinned), Times.Once());
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.UpdateMany(It.Is<List<MovieVersion>>(l => l.Count == 0)), Times.Once());
+        }
+
+        [TestCase(DeleteMediaFileReason.Upgrade)]
+        [TestCase(DeleteMediaFileReason.ManualOverride)]
+        [TestCase(DeleteMediaFileReason.MissingFromDisk)]
+        public void should_keep_pinned_version_when_its_file_is_replaced_or_missing(DeleteMediaFileReason reason)
+        {
+            var pinned = new MovieVersion { Id = 7, MovieId = _movie.Id, MovieFileId = 42, Pinned = true };
+            var movieFile = new MovieFile { Id = 42, MovieId = _movie.Id, MovieVersionId = 7 };
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion> { new MovieVersion { Id = 1, MovieId = _movie.Id, MovieFileId = 10 }, pinned });
+
+            Subject.Handle(new MovieFileDeletedEvent(movieFile, reason));
+
+            Mocker.GetMock<IMovieVersionRepository>().Verify(v => v.Delete(It.IsAny<MovieVersion>()), Times.Never());
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.UpdateMany(It.Is<List<MovieVersion>>(l => l.Count == 1 && l[0].Id == 7 && l[0].MovieFileId == 0)), Times.Once());
         }
 
         [Test]

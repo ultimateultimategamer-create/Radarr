@@ -68,6 +68,14 @@ namespace Radarr.Api.V3.Indexers
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? MovieVersionId { get; set; }
 
+        // Sent to grab the release as a new, pinned version of the movie, stored next to its other files.
+        // Without a name, the version is named after the release's edition or quality.
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? AddAsMovieVersion { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string MovieVersionName { get; set; }
+
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? DownloadClientId { get; set; }
 

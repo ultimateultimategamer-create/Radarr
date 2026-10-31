@@ -583,6 +583,34 @@ namespace NzbDrone.Core.Test.MediaFiles.DiskScanServiceTests
         }
 
         [Test]
+        public void should_never_assign_new_files_to_a_pinned_version()
+        {
+            GivenMovieFolder();
+            GivenFiles(new[] { Path.Combine(_movie.Path, "Movie.2160p.mkv") });
+            _movie.QualityProfile = new QualityProfile
+            {
+                Items = new List<QualityProfileQualityItem> { new QualityProfileQualityItem { Quality = Quality.Bluray1080p, Allowed = true } }
+            };
+            var version = GivenAdditionalVersion(_movie.Path);
+            version.Version.Pinned = true;
+            version.QualityProfile = new QualityProfile
+            {
+                Items = new List<QualityProfileQualityItem> { new QualityProfileQualityItem { Quality = Quality.Bluray2160p, Allowed = true } }
+            };
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Setup(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.IsAny<Movie>(), false))
+                  .Returns<List<string>, Movie, bool>((paths, movie, filter) => paths.Select(path =>
+                      new ImportDecision(new LocalMovie { Movie = movie, Path = path, Quality = new QualityModel(Quality.Bluray2160p) })).ToList());
+
+            Subject.Scan(_movie);
+
+            Mocker.GetMock<IMakeImportDecision>()
+                  .Verify(s => s.GetImportDecisions(It.IsAny<List<string>>(), It.Is<Movie>(m => m.IsVersionView), false), Times.Never());
+            Mocker.GetMock<IImportApprovedMovie>()
+                  .Verify(s => s.Import(It.Is<List<ImportDecision>>(d => d.Any(i => i.LocalMovie.Movie.MovieVersionId == 7)), false, null, ImportMode.Auto), Times.Never());
+        }
+
+        [Test]
         public void should_skip_unreadable_files_when_matching_versions_in_a_shared_folder()
         {
             GivenMovieFolder();
