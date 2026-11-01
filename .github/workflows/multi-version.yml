@@ -66,7 +66,7 @@ jobs:
         run: |
           # The full suite runs in Release, matching upstream. Debug additionally checks version behavior and host wiring.
           FILTER="Category!=ManualTest&Category!=WINDOWS&Category!=IntegrationTest&Category!=AutomationTest"
-          VERSION_FILTER="FullyQualifiedName~MovieVersion|FullyQualifiedName~Versions|FullyQualifiedName~DownloadDecisionMaker|FullyQualifiedName~PendingReleaseServiceTests|FullyQualifiedName~DiskScanServiceTests|FullyQualifiedName~ImportApprovedMoviesFixture|FullyQualifiedName~ManualImportServiceFixture|FullyQualifiedName~NzbDrone.App.Test|FullyQualifiedName~NzbDrone.Host.Test|FullyQualifiedName~NzbDrone.Api.Test|FullyQualifiedName~PlexVersionLabel|FullyQualifiedName~extra_version_naming"
+          VERSION_FILTER="FullyQualifiedName~MovieVersion|FullyQualifiedName~Versions|FullyQualifiedName~DownloadDecisionMaker|FullyQualifiedName~PendingReleaseServiceTests|FullyQualifiedName~DiskScanServiceTests|FullyQualifiedName~ImportApprovedMoviesFixture|FullyQualifiedName~ManualImportServiceFixture|FullyQualifiedName~NzbDrone.App.Test|FullyQualifiedName~NzbDrone.Host.Test|FullyQualifiedName~NzbDrone.Api.Test|FullyQualifiedName~PlexVersionLabel|FullyQualifiedName~extra_version_naming|FullyQualifiedName~plex_version_labels"
           ASSEMBLIES=()
           for name in Radarr.Core.Test Radarr.Api.Test Radarr.Host.Test; do
             dll=$(find _tests -name "$name.dll" -not -path "*/ref/*" | head -1)

@@ -280,6 +280,7 @@ function Naming() {
               name="extraVersionNaming"
               values={extraVersionNamingOptions}
               helpText={translate('ExtraVersionNamingHelpText')}
+              helpTextWarning={translate('ExtraVersionNamingHelpTextWarning')}
               onChange={handleInputChange}
               {...settings.extraVersionNaming}
             />

@@ -51,10 +51,9 @@ namespace NzbDrone.Core.Movies.Versions
 
                 if (folderName.IsNotNullOrWhiteSpace() && versionName.IsNotNullOrWhiteSpace())
                 {
-                    // Braces would end Plex's edition tag early
-                    var editionName = versionName.Replace("{", string.Empty).Replace("}", string.Empty).Trim();
+                    var editionName = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition ? GetEditionName(movie) : string.Empty;
 
-                    fileName = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition && editionName.IsNotNullOrWhiteSpace()
+                    fileName = editionName.IsNotNullOrWhiteSpace()
                         ? $"{folderName} {{edition-{editionName}}}"
                         : $"{folderName} - {versionName}";
                 }
@@ -111,6 +110,13 @@ namespace NzbDrone.Core.Movies.Versions
             }
 
             return uniqueName;
+        }
+
+        private string GetEditionName(Movie versionView)
+        {
+            var extraVersions = (_movieVersionService.GetByMovieId(versionView.Id) ?? Enumerable.Empty<MovieVersion>()).OrderBy(v => v.Id).Skip(1);
+
+            return MovieVersionEditionName.Get(versionView.Version, extraVersions);
         }
 
         private ExtraVersionNaming GetExtraVersionNaming()

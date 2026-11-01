@@ -99,14 +99,23 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             return Json.Deserialize<PlexResponse<PlexMoviesContainer>>(response).MediaContainer?.Movies ?? new List<PlexMovie>();
         }
 
+        // Null when Plex no longer has the item
         public PlexMovie GetMovie(string ratingKey, PlexServerSettings settings)
         {
             var request = BuildRequest($"library/metadata/{ratingKey}", HttpMethod.Get, settings);
-            var response = ProcessRequest(request);
 
-            CheckForError(response);
+            request.SuppressHttpErrorStatusCodes = new[] { HttpStatusCode.NotFound };
 
-            return Json.Deserialize<PlexResponse<PlexMoviesContainer>>(response).MediaContainer?.Movies?.FirstOrDefault();
+            var response = ExecuteRequest(request);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            CheckForError(response.Content);
+
+            return Json.Deserialize<PlexResponse<PlexMoviesContainer>>(response.Content).MediaContainer?.Movies?.FirstOrDefault();
         }
 
         // Fields are edited as "field.value" and locked or unlocked as "field.locked", as Plex's own apps do
@@ -171,6 +180,11 @@ namespace NzbDrone.Core.Notifications.Plex.Server
 
         private string ProcessRequest(HttpRequestBuilder requestBuilder)
         {
+            return ExecuteRequest(requestBuilder).Content;
+        }
+
+        private HttpResponse ExecuteRequest(HttpRequestBuilder requestBuilder)
+        {
             var httpRequest = requestBuilder.Build();
 
             HttpResponse response;
@@ -200,7 +214,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                 throw new PlexException($"Unable to connect to Plex Media Server, {ex.Message}", ex);
             }
 
-            return response.Content;
+            return response;
         }
 
         private void CheckForError(string response)

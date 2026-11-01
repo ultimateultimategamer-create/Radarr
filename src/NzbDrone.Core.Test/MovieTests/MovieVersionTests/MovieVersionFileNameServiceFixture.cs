@@ -141,6 +141,14 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_cut_the_edition_to_the_length_plex_allows()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+
+            Subject.GetFileName(GivenVersionView("Director's Cut Extended Unrated Special"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-Director's Cut Extended Unrated}");
+        }
+
+        [Test]
         public void should_leave_braces_out_of_the_edition()
         {
             GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);

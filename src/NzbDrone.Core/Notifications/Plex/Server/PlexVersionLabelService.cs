@@ -15,13 +15,16 @@ using NzbDrone.Core.ThingiProvider.Events;
 
 namespace NzbDrone.Core.Notifications.Plex.Server
 {
-    // Files of extra versions named as Plex editions are items of their own in Plex. For each Plex Media Server
-    // connection with 'Label Extra Versions' on, this puts the version's name at the end of those items' titles,
-    // "Movie (IMAX)", and keeps their edition on the version's name, so a version renamed in Radarr is renamed in Plex
-    // too. Both fields are locked, as when edited by hand, so a Plex metadata refresh keeps them.
-    // Items are found by their file. The original movie, and any item holding files of more than one version, is never
-    // edited. With the option off, or extra versions not named as Plex editions, the labels are taken off again.
-    public class PlexVersionLabelService : IExecute<LabelPlexVersionsCommand>, IHandle<ProviderUpdatedEvent<INotification>>
+    // Files of extra versions named as Plex editions are items of their own in Plex. For each Plex Media Server connection
+    // with 'Label Extra Versions' on, this puts the version's name at the end of those items' titles, "Movie (IMAX)", and
+    // keeps their edition on the version's edition name. Both fields are locked, as when edited by hand, so a Plex metadata
+    // refresh keeps them, and each label is recorded with what the item had before.
+    // Only items holding nothing but the version's own files are labeled, and only for movies the connection applies to.
+    // A title changed outside Radarr after labeling is left as it is. With the option off, or extra versions named as
+    // labels, the recorded labels are taken off, restoring what the items had. Nothing else in Plex is changed.
+    public class PlexVersionLabelService : IExecute<LabelPlexVersionsCommand>,
+                                           IHandle<ProviderUpdatedEvent<INotification>>,
+                                           IHandle<ProviderDeletedEvent<INotification>>
     {
         // A labeled version is checked again once a day, or as soon as it has another file or name
         private static readonly TimeSpan RecheckLabeledAfter = TimeSpan.FromHours(24);
@@ -37,10 +40,10 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         private readonly IMovieService _movieService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IPlexServerProxy _plexServerProxy;
+        private readonly IPlexVersionLabelRepository _labelRepository;
         private readonly Logger _logger;
 
-        private readonly ConcurrentDictionary<string, LabelCheck> _checks = new();
-        private readonly ConcurrentDictionary<int, bool> _labelsTakenOff = new();
+        private readonly ConcurrentDictionary<string, Miss> _misses = new();
         private readonly ConcurrentDictionary<string, DateTime> _warnings = new();
 
         public PlexVersionLabelService(INotificationFactory notificationFactory,
@@ -49,6 +52,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                                        IMovieService movieService,
                                        IMediaFileService mediaFileService,
                                        IPlexServerProxy plexServerProxy,
+                                       IPlexVersionLabelRepository labelRepository,
                                        Logger logger)
         {
             _notificationFactory = notificationFactory;
@@ -57,16 +61,8 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             _movieService = movieService;
             _mediaFileService = mediaFileService;
             _plexServerProxy = plexServerProxy;
+            _labelRepository = labelRepository;
             _logger = logger;
-        }
-
-        private enum LabelResult
-        {
-            Labeled,
-            Unchanged,
-            NotFound,
-            NotMatched,
-            Merged
         }
 
         public void Execute(LabelPlexVersionsCommand message)
@@ -82,67 +78,79 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             }
 
             var namedAsEditions = (_namingConfigService.GetConfig()?.ExtraVersionNaming ?? NamingConfig.Default.ExtraVersionNaming) == ExtraVersionNaming.PlexEdition;
+            var labelingIds = connections.Where(d => namedAsEditions && ((PlexServerSettings)d.Settings).LabelVersions).Select(d => d.Id).ToHashSet();
+            var connectionIds = connections.Select(d => d.Id).ToHashSet();
 
-            var labeling = connections.Where(d => namedAsEditions && ((PlexServerSettings)d.Settings).LabelVersions).ToList();
-            var labelingIds = labeling.Select(d => d.Id).ToHashSet();
+            var records = (_labelRepository.All() ?? Enumerable.Empty<PlexVersionLabel>())
+                .Where(r => connectionIds.Contains(r.NotificationId))
+                .ToList();
 
-            // Labels are taken off once per start of Radarr, and again whenever the connection is saved
-            var takingOff = connections.Where(d => !labelingIds.Contains(d.Id) && !_labelsTakenOff.ContainsKey(d.Id)).ToList();
-
-            if (labeling.Empty() && takingOff.Empty())
+            // Without labels to add or take off, Plex isn't contacted at all
+            if (labelingIds.Empty() && records.Empty())
             {
                 return;
             }
 
-            var versions = GetVersionFiles();
+            var library = GetLibrary(records);
 
-            foreach (var definition in labeling)
+            foreach (var definition in connections)
             {
-                _labelsTakenOff.TryRemove(definition.Id, out _);
+                var connectionRecords = records.Where(r => r.NotificationId == definition.Id).ToList();
 
-                Label(definition, versions, true);
-            }
-
-            foreach (var definition in takingOff)
-            {
-                if (Label(definition, versions, false))
+                if (labelingIds.Contains(definition.Id))
                 {
-                    _labelsTakenOff[definition.Id] = true;
+                    Label(definition, library, connectionRecords);
+                }
+                else if (connectionRecords.Any())
+                {
+                    TakeOffLabels(definition, library, connectionRecords);
                 }
             }
         }
 
         public void Handle(ProviderUpdatedEvent<INotification> message)
         {
-            var definitionId = message.Definition.Id;
+            ForgetMisses(message.Definition.Id);
+        }
 
-            _labelsTakenOff.TryRemove(definitionId, out _);
+        public void Handle(ProviderDeletedEvent<INotification> message)
+        {
+            ForgetMisses(message.ProviderId);
 
-            foreach (var key in _checks.Keys.Where(k => k.StartsWith($"{definitionId}:", StringComparison.Ordinal)))
+            var ids = (_labelRepository.All() ?? Enumerable.Empty<PlexVersionLabel>())
+                .Where(r => r.NotificationId == message.ProviderId)
+                .Select(r => r.Id)
+                .ToList();
+
+            if (ids.Any())
             {
-                _checks.TryRemove(key, out _);
+                _labelRepository.DeleteMany(ids);
             }
         }
 
-        // Extra versions that have a file, each with the end of its file's path and those of the movie's other versions
-        private List<VersionFile> GetVersionFiles()
+        private void ForgetMisses(int definitionId)
+        {
+            foreach (var key in _misses.Keys.Where(k => k.StartsWith($"{definitionId}:", StringComparison.Ordinal)))
+            {
+                _misses.TryRemove(key, out _);
+            }
+        }
+
+        // Extra versions whose file is named as an edition, and the movies of those and of recorded labels
+        private Library GetLibrary(List<PlexVersionLabel> records)
         {
             var versions = _movieVersionService.GetAllAdditionalVersions() ?? new List<MovieVersion>();
             var versionsWithFiles = versions.Where(v => v.MovieFileId > 0 && v.Name.IsNotNullOrWhiteSpace()).ToList();
+            var fileMovieIds = versionsWithFiles.Select(v => v.MovieId).Distinct().ToList();
+            var movieIds = fileMovieIds.Concat(records.Select(r => r.MovieId)).Distinct().ToList();
 
-            if (versionsWithFiles.Empty())
-            {
-                return new List<VersionFile>();
-            }
+            var movies = movieIds.Any()
+                ? (_movieService.GetMovies(movieIds) ?? new List<Movie>()).ToDictionary(m => m.Id)
+                : new Dictionary<int, Movie>();
 
-            var movieIds = versionsWithFiles.Select(v => v.MovieId).Distinct().ToList();
-
-            var movies = (_movieService.GetMovies(movieIds) ?? new List<Movie>())
-                .ToDictionary(m => m.Id);
-
-            var files = (_mediaFileService.GetFilesByMovies(movieIds) ?? new List<MovieFile>())
-                .GroupBy(f => f.MovieId)
-                .ToDictionary(g => g.Key, g => g.ToList());
+            var files = fileMovieIds.Any()
+                ? (_mediaFileService.GetFilesByMovies(fileMovieIds) ?? new List<MovieFile>()).GroupBy(f => f.MovieId).ToDictionary(g => g.Key, g => g.ToList())
+                : new Dictionary<int, List<MovieFile>>();
 
             var versionsOfMovies = versions.GroupBy(v => v.MovieId).ToDictionary(g => g.Key, g => g.ToList());
             var versionFiles = new List<VersionFile>();
@@ -157,126 +165,284 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                 }
 
                 var file = movieFiles.FirstOrDefault(f => f.Id == version.MovieFileId);
+                var extraVersions = versionsOfMovies[version.MovieId];
+                var editionName = MovieVersionEditionName.Get(version, extraVersions);
 
-                if (file == null || file.RelativePath.IsNullOrWhiteSpace())
+                if (file == null || file.RelativePath.IsNullOrWhiteSpace() || editionName.IsNullOrWhiteSpace())
                 {
                     continue;
                 }
 
-                var additionalVersions = versionsOfMovies[version.MovieId];
-                var additionalVersionIds = additionalVersions.Select(v => v.Id).ToList();
-
-                var otherVersionFilePaths = movieFiles
-                    .Where(f => f.RelativePath.IsNotNullOrWhiteSpace() && f.GetVersionId(additionalVersionIds) != version.Id)
-                    .Select(f => GetPathEnd(movie, additionalVersions.FirstOrDefault(v => v.Id == f.GetVersionId(additionalVersionIds)), f))
-                    .ToList();
+                var extraVersionIds = extraVersions.Select(v => v.Id).ToList();
 
                 versionFiles.Add(new VersionFile
                 {
                     Movie = movie,
                     Version = version,
                     File = file,
+                    EditionName = editionName,
                     FilePath = GetPathEnd(movie, version, file),
-                    OtherVersionFilePaths = otherVersionFilePaths
+                    OwnFilePaths = movieFiles
+                        .Where(f => f.RelativePath.IsNotNullOrWhiteSpace() && f.GetVersionId(extraVersionIds) == version.Id)
+                        .Select(f => GetPathEnd(movie, version, f))
+                        .ToList()
                 });
             }
 
-            return versionFiles;
+            return new Library
+            {
+                Movies = movies,
+                VersionFiles = versionFiles
+            };
         }
 
-        // False when Plex couldn't be reached
-        private bool Label(NotificationDefinition definition, List<VersionFile> versions, bool add)
+        private void Label(NotificationDefinition definition, Library library, List<PlexVersionLabel> records)
         {
             var settings = (PlexServerSettings)definition.Settings;
             var now = DateTime.UtcNow;
-            var due = add ? versions.Where(v => IsDue(GetKey(definition, v), v, now)).ToList() : versions;
+            var versionIds = library.VersionFiles.Select(v => v.Version.Id).ToHashSet();
 
-            if (due.Empty())
+            // Labels of versions that are gone, or no longer have a file named as an edition
+            var stale = records
+                .Where(r => !versionIds.Contains(r.MovieVersionId) && AppliesTo(definition, FindMovie(library, r.MovieId)))
+                .ToList();
+
+            var due = library.VersionFiles
+                .Where(v => AppliesTo(definition, v.Movie) && IsDue(definition, v, FindRecord(records, v), now))
+                .ToList();
+
+            if (stale.Empty() && due.Empty())
             {
-                return true;
+                return;
             }
 
             try
             {
-                var sections = _plexServerProxy.GetMovieSections(settings) ?? new List<PlexSection>();
+                foreach (var record in stale)
+                {
+                    TakeOffLabel(settings, record);
+                }
+
+                var sections = due.Any() ? _plexServerProxy.GetMovieSections(settings) ?? new List<PlexSection>() : new List<PlexSection>();
 
                 foreach (var version in due)
                 {
-                    var result = LabelItem(version, sections, settings, add);
-
-                    if (add)
-                    {
-                        Record(GetKey(definition, version), version, result, now);
-                    }
+                    LabelVersion(definition, settings, version, FindRecord(records, version), sections, now);
                 }
-
-                return true;
             }
             catch (Exception ex)
             {
                 Warn($"connection:{definition.Id}", ex, "Unable to label extra versions in Plex ({0}): {1}", definition.Name, ex.Message);
-
-                return false;
             }
         }
 
-        private LabelResult LabelItem(VersionFile version, List<PlexSection> sections, PlexServerSettings settings, bool add)
+        private void LabelVersion(NotificationDefinition definition, PlexServerSettings settings, VersionFile version, PlexVersionLabel record, List<PlexSection> sections, DateTime now)
         {
-            foreach (var section in sections)
+            var key = GetKey(definition, version);
+            PlexMovie item = null;
+            var sectionId = 0;
+
+            // The item labeled before is usually still the version's
+            if (record != null)
             {
-                var found = FindItem(section.Id, version, settings);
+                var labeled = _plexServerProxy.GetMovie(record.RatingKey, settings);
 
-                if (found == null)
+                if (labeled != null && labeled.GetFiles().Any(f => IsPath(f, version.FilePath)))
                 {
-                    continue;
-                }
-
-                // Listings can leave fields out, the item itself has them all
-                var item = _plexServerProxy.GetMovie(found.RatingKey, settings) ?? found;
-
-                if (item.GetFiles().Any(f => version.OtherVersionFilePaths.Any(p => IsPath(f, p))))
-                {
-                    if (add)
-                    {
-                        Warn($"merged:{version.Version.Id}",
-                             null,
-                             "Plex shows the '{0}' version of {1} together with another version, so it can't be labeled. Rename the movie's files to name the version as a Plex edition, or split the movie apart in Plex",
-                             version.Version.Name,
-                             version.Movie.Title);
-                    }
-
-                    return LabelResult.Merged;
-                }
-
-                // Until Plex has matched a new item its title comes from the file's name
-                if (add && !IsMatched(item))
-                {
-                    return LabelResult.NotMatched;
-                }
-
-                var name = version.Version.Name.Trim();
-                var fields = GetLabelFields(item, name, add);
-
-                if (fields.Empty())
-                {
-                    return LabelResult.Unchanged;
-                }
-
-                _plexServerProxy.EditMovie(section.Id, item.RatingKey, fields, settings);
-
-                if (add)
-                {
-                    _logger.Info("Labeled the '{0}' version of {1} in Plex", name, version.Movie.Title);
+                    item = labeled;
+                    sectionId = record.SectionId;
                 }
                 else
                 {
-                    _logger.Info("Took the label off the '{0}' version of {1} in Plex", name, version.Movie.Title);
-                }
+                    if (labeled != null)
+                    {
+                        Restore(settings, record, labeled);
+                    }
 
-                return LabelResult.Labeled;
+                    _labelRepository.Delete(record.Id);
+                    record = null;
+                }
             }
 
-            return LabelResult.NotFound;
+            if (item == null)
+            {
+                foreach (var section in sections)
+                {
+                    var found = FindItem(section.Id, version, settings);
+
+                    if (found != null)
+                    {
+                        // Listings can leave fields out, the item itself has them all
+                        item = _plexServerProxy.GetMovie(found.RatingKey, settings) ?? found;
+                        sectionId = section.Id;
+
+                        break;
+                    }
+                }
+            }
+
+            if (item == null)
+            {
+                Missed(key, version, now);
+
+                return;
+            }
+
+            // An item also holding a file that isn't the version's, tracked by Radarr or not, may be the original movie
+            if (!item.GetFiles().All(f => version.OwnFilePaths.Any(p => IsPath(f, p))))
+            {
+                if (record != null)
+                {
+                    Restore(settings, record, item);
+                    _labelRepository.Delete(record.Id);
+                }
+
+                Warn($"shared:{definition.Id}:{version.Version.Id}",
+                     null,
+                     "Plex holds the '{0}' version of {1} together with other files, so it isn't labeled. Name extra versions as Plex editions (Settings > Media Management) and rename the movie's files, or split the movie apart in Plex",
+                     version.Version.Name,
+                     version.Movie.Title);
+
+                Missed(key, version, now);
+
+                return;
+            }
+
+            // Until Plex has matched a new item its title comes from the file's name
+            if (!IsMatched(item))
+            {
+                Missed(key, version, now);
+
+                return;
+            }
+
+            _misses.TryRemove(key, out _);
+
+            var name = version.Version.Name.Trim();
+            var title = item.Title ?? string.Empty;
+
+            if (record != null && title != record.Title)
+            {
+                // Changed outside Radarr since it was labeled: left as it is
+                record.LastChecked = now;
+                _labelRepository.Update(record);
+
+                return;
+            }
+
+            // A label left from an earlier record, as after the connection was added again, isn't labeled twice
+            var originalTitle = record?.OriginalTitle ?? RemoveLabel(RemoveLabel(title, name), item.EditionTitle);
+            var labeledTitle = $"{originalTitle} ({name})";
+            var fields = new Dictionary<string, string>();
+
+            if (title != labeledTitle || !item.IsLocked("title"))
+            {
+                fields.Add("title.value", labeledTitle);
+                fields.Add("title.locked", "1");
+            }
+
+            if (item.EditionTitle != version.EditionName || !item.IsLocked("editionTitle"))
+            {
+                fields.Add("editionTitle.value", version.EditionName);
+                fields.Add("editionTitle.locked", "1");
+            }
+
+            if (fields.Any())
+            {
+                _plexServerProxy.EditMovie(sectionId, item.RatingKey, fields, settings);
+                _logger.Info("Labeled the '{0}' version of {1} in Plex", name, version.Movie.Title);
+            }
+
+            if (record == null)
+            {
+                _labelRepository.Insert(new PlexVersionLabel
+                {
+                    NotificationId = definition.Id,
+                    MovieId = version.Movie.Id,
+                    MovieVersionId = version.Version.Id,
+                    MovieFileId = version.File.Id,
+                    Name = version.Version.Name,
+                    SectionId = sectionId,
+                    RatingKey = item.RatingKey,
+                    Title = labeledTitle,
+                    EditionTitle = version.EditionName,
+                    OriginalTitle = originalTitle,
+                    OriginalTitleLocked = item.IsLocked("title"),
+                    OriginalEditionTitle = item.EditionTitle,
+                    OriginalEditionTitleLocked = item.IsLocked("editionTitle"),
+                    LastChecked = now
+                });
+            }
+            else
+            {
+                record.MovieFileId = version.File.Id;
+                record.Name = version.Version.Name;
+                record.Title = labeledTitle;
+                record.EditionTitle = version.EditionName;
+                record.LastChecked = now;
+                _labelRepository.Update(record);
+            }
+        }
+
+        private void TakeOffLabels(NotificationDefinition definition, Library library, List<PlexVersionLabel> records)
+        {
+            var settings = (PlexServerSettings)definition.Settings;
+            var applying = records.Where(r => AppliesTo(definition, FindMovie(library, r.MovieId))).ToList();
+
+            if (applying.Empty())
+            {
+                return;
+            }
+
+            // A label stays recorded until it's taken off, so it's tried again on the next run when Plex can't be reached
+            try
+            {
+                foreach (var record in applying)
+                {
+                    TakeOffLabel(settings, record);
+                }
+            }
+            catch (Exception ex)
+            {
+                Warn($"connection:{definition.Id}", ex, "Unable to take version labels off in Plex ({0}): {1}", definition.Name, ex.Message);
+            }
+        }
+
+        private void TakeOffLabel(PlexServerSettings settings, PlexVersionLabel record)
+        {
+            var item = _plexServerProxy.GetMovie(record.RatingKey, settings);
+
+            if (item != null)
+            {
+                Restore(settings, record, item);
+            }
+
+            _labelRepository.Delete(record.Id);
+        }
+
+        // Restores what the item had before it was labeled, in each field that still has what Radarr put there
+        private void Restore(PlexServerSettings settings, PlexVersionLabel record, PlexMovie item)
+        {
+            var fields = new Dictionary<string, string>();
+
+            if (item.Title == record.Title)
+            {
+                fields.Add("title.value", record.OriginalTitle ?? string.Empty);
+                fields.Add("title.locked", record.OriginalTitleLocked ? "1" : "0");
+            }
+
+            if (item.EditionTitle == record.EditionTitle &&
+                (record.EditionTitle != record.OriginalEditionTitle || !record.OriginalEditionTitleLocked))
+            {
+                fields.Add("editionTitle.value", record.OriginalEditionTitle ?? string.Empty);
+                fields.Add("editionTitle.locked", record.OriginalEditionTitleLocked ? "1" : "0");
+            }
+
+            if (fields.Any())
+            {
+                _plexServerProxy.EditMovie(record.SectionId, record.RatingKey, fields, settings);
+                _logger.Info("Took the label off '{0}' in Plex", record.Title);
+            }
         }
 
         // By title and year, then by year alone as Plex may title the movie otherwise, then by title alone as Plex may
@@ -313,29 +479,62 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             return null;
         }
 
-        // The label is " (name)" at the end of the title. The item's edition is kept on the version's name, so a label
-        // made for an earlier name of the version is found by the edition and replaced.
-        private static Dictionary<string, string> GetLabelFields(PlexMovie item, string name, bool add)
+        private bool IsDue(NotificationDefinition definition, VersionFile version, PlexVersionLabel record, DateTime now)
         {
-            var title = item.Title ?? string.Empty;
-            var edition = item.EditionTitle ?? string.Empty;
-            var unlabeled = RemoveLabel(RemoveLabel(title, edition), name);
-            var wanted = add ? $"{unlabeled} ({name})" : unlabeled;
-            var fields = new Dictionary<string, string>();
-
-            if (wanted != title || (add && !item.IsLocked("title")))
+            if (record != null &&
+                record.MovieFileId == version.File.Id &&
+                record.Name == version.Version.Name &&
+                record.EditionTitle == version.EditionName)
             {
-                fields.Add("title.value", wanted);
-                fields.Add("title.locked", add ? "1" : "0");
+                return now - record.LastChecked >= RecheckLabeledAfter;
             }
 
-            if (add && (edition != name || !item.IsLocked("editionTitle")))
+            if (_misses.TryGetValue(GetKey(definition, version), out var miss) && IsSame(miss, version))
             {
-                fields.Add("editionTitle.value", name);
-                fields.Add("editionTitle.locked", "1");
+                return now - miss.FirstMissed < RetryOnEveryRunFor || now - miss.LastTried >= RetryAfter;
             }
 
-            return fields;
+            return true;
+        }
+
+        private void Missed(string key, VersionFile version, DateTime now)
+        {
+            var firstMissed = _misses.TryGetValue(key, out var earlier) && IsSame(earlier, version) ? earlier.FirstMissed : now;
+
+            _misses[key] = new Miss
+            {
+                FilePath = version.FilePath,
+                Name = version.Version.Name,
+                FirstMissed = firstMissed,
+                LastTried = now
+            };
+        }
+
+        private static bool IsSame(Miss miss, VersionFile version)
+        {
+            return miss.FilePath == version.FilePath && miss.Name == version.Version.Name;
+        }
+
+        // As for every connection: one with tags applies only to movies with one of them. Labels of a movie Radarr no
+        // longer has can still be taken off.
+        private static bool AppliesTo(NotificationDefinition definition, Movie movie)
+        {
+            if (definition.Tags == null || definition.Tags.Empty() || movie == null)
+            {
+                return true;
+            }
+
+            return movie.Tags != null && definition.Tags.Intersect(movie.Tags).Any();
+        }
+
+        private static Movie FindMovie(Library library, int movieId)
+        {
+            return library.Movies.TryGetValue(movieId, out var movie) ? movie : null;
+        }
+
+        private static PlexVersionLabel FindRecord(List<PlexVersionLabel> records, VersionFile version)
+        {
+            return records.FirstOrDefault(r => r.MovieVersionId == version.Version.Id);
         }
 
         private static string RemoveLabel(string title, string name)
@@ -375,46 +574,6 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             return path.Replace('\\', '/').Trim().Trim('/');
         }
 
-        private bool IsDue(string key, VersionFile version, DateTime now)
-        {
-            if (!_checks.TryGetValue(key, out var check) || !IsSame(check, version))
-            {
-                return true;
-            }
-
-            if (check.Labeled)
-            {
-                return now - check.LastChecked >= RecheckLabeledAfter;
-            }
-
-            return now - check.FirstMissed < RetryOnEveryRunFor || now - check.LastChecked >= RetryAfter;
-        }
-
-        private void Record(string key, VersionFile version, LabelResult result, DateTime now)
-        {
-            var labeled = result == LabelResult.Labeled || result == LabelResult.Unchanged;
-            var firstMissed = now;
-
-            if (!labeled && _checks.TryGetValue(key, out var earlier) && !earlier.Labeled && IsSame(earlier, version))
-            {
-                firstMissed = earlier.FirstMissed;
-            }
-
-            _checks[key] = new LabelCheck
-            {
-                MovieFileId = version.File.Id,
-                Name = version.Version.Name,
-                Labeled = labeled,
-                FirstMissed = firstMissed,
-                LastChecked = now
-            };
-        }
-
-        private static bool IsSame(LabelCheck check, VersionFile version)
-        {
-            return check.MovieFileId == version.File.Id && check.Name == version.Version.Name;
-        }
-
         private static string GetKey(NotificationDefinition definition, VersionFile version)
         {
             return $"{definition.Id}:{version.Version.Id}";
@@ -435,22 +594,28 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             _logger.Warn(ex, message, args);
         }
 
+        private class Library
+        {
+            public Dictionary<int, Movie> Movies { get; set; }
+            public List<VersionFile> VersionFiles { get; set; }
+        }
+
         private class VersionFile
         {
             public Movie Movie { get; set; }
             public MovieVersion Version { get; set; }
             public MovieFile File { get; set; }
+            public string EditionName { get; set; }
             public string FilePath { get; set; }
-            public List<string> OtherVersionFilePaths { get; set; }
+            public List<string> OwnFilePaths { get; set; }
         }
 
-        private class LabelCheck
+        private class Miss
         {
-            public int MovieFileId { get; set; }
+            public string FilePath { get; set; }
             public string Name { get; set; }
-            public bool Labeled { get; set; }
             public DateTime FirstMissed { get; set; }
-            public DateTime LastChecked { get; set; }
+            public DateTime LastTried { get; set; }
         }
     }
 }
