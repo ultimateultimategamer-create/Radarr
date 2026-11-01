@@ -33,6 +33,14 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                              SET ""MovieFileId"" = (SELECT ""Movies"".""MovieFileId"" FROM ""Movies"" WHERE ""Movies"".""Id"" = ""MovieVersions"".""MovieId"")
                              WHERE ""Id"" IN (SELECT MIN(""Id"") FROM ""MovieVersions"" GROUP BY ""MovieId"")
                              AND ""MovieFileId"" <> (SELECT ""Movies"".""MovieFileId"" FROM ""Movies"" WHERE ""Movies"".""Id"" = ""MovieVersions"".""MovieId"")");
+
+            // Pinned versions follow the movie's quality profile, so a profile the movie left behind can still be deleted
+            mapper.Execute(@"UPDATE ""MovieVersions""
+                             SET ""QualityProfileId"" = (SELECT ""Movies"".""QualityProfileId"" FROM ""Movies"" WHERE ""Movies"".""Id"" = ""MovieVersions"".""MovieId"")
+                             WHERE ""Pinned"" = @Pinned
+                             AND ""MovieId"" IN (SELECT ""Id"" FROM ""Movies"")
+                             AND ""QualityProfileId"" <> (SELECT ""Movies"".""QualityProfileId"" FROM ""Movies"" WHERE ""Movies"".""Id"" = ""MovieVersions"".""MovieId"")",
+                           new { Pinned = true });
         }
     }
 }

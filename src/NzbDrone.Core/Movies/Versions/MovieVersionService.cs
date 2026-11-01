@@ -544,9 +544,24 @@ namespace NzbDrone.Core.Movies.Versions
 
             foreach (var version in versions.Skip(1))
             {
+                var changed = false;
+
                 if (version.Path != movie.Path)
                 {
                     version.Path = movie.Path;
+                    changed = true;
+                }
+
+                // A pinned version has no quality profile of its own, it follows the movie's.
+                // Otherwise a profile the movie left behind would stay in use and couldn't be deleted.
+                if (version.Pinned && version.QualityProfileId != movie.QualityProfileId)
+                {
+                    version.QualityProfileId = movie.QualityProfileId;
+                    changed = true;
+                }
+
+                if (changed)
+                {
                     updated.Add(version);
                 }
             }

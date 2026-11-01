@@ -69,6 +69,28 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
         }
 
         [Test]
+        public void should_keep_pinned_versions_on_their_movie_quality_profile()
+        {
+            var movie = Builder<Movie>.CreateNew()
+                                      .With(m => m.QualityProfileId = 3)
+                                      .BuildNew();
+
+            Db.Insert(movie);
+
+            var primary = new MovieVersion { MovieId = movie.Id, Name = "Original", QualityProfileId = 3, Path = movie.Path };
+            var pinned = new MovieVersion { MovieId = movie.Id, Name = "IMAX", QualityProfileId = 5, Pinned = true, Path = movie.Path };
+            var automatic = new MovieVersion { MovieId = movie.Id, Name = "4K", QualityProfileId = 6, Path = movie.Path };
+            Db.Insert(primary);
+            Db.Insert(pinned);
+            Db.Insert(automatic);
+
+            Subject.Clean();
+
+            AllStoredModels.Single(v => v.Id == pinned.Id).QualityProfileId.Should().Be(3);
+            AllStoredModels.Single(v => v.Id == automatic.Id).QualityProfileId.Should().Be(6);
+        }
+
+        [Test]
         public void should_sync_primary_version_file_with_the_movie()
         {
             var movie = Builder<Movie>.CreateNew()

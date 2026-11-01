@@ -133,6 +133,24 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_keep_pinned_versions_on_the_movie_quality_profile_when_the_movie_is_edited()
+        {
+            var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Path = _movie.Path, QualityProfileId = _movie.QualityProfileId };
+            var pinned = new MovieVersion { Id = 7, MovieId = _movie.Id, Path = _movie.Path, QualityProfileId = 1, Pinned = true };
+            var automatic = new MovieVersion { Id = 8, MovieId = _movie.Id, Path = _movie.Path, QualityProfileId = 4 };
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion> { primary, pinned, automatic });
+
+            Subject.Handle(new MovieEditedEvent(_movie, _movie));
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.UpdateMany(It.Is<IList<MovieVersion>>(l => l.Count == 1 && l[0].Id == 7 && l[0].QualityProfileId == _movie.QualityProfileId)), Times.Once());
+            automatic.QualityProfileId.Should().Be(4);
+        }
+
+        [Test]
         public void should_return_the_movie_for_a_file_of_an_unknown_version()
         {
             Mocker.GetMock<IMovieVersionRepository>()
