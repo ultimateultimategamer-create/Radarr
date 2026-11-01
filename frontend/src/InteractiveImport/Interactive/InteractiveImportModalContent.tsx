@@ -32,6 +32,7 @@ import InteractiveImport, {
 } from 'InteractiveImport/InteractiveImport';
 import SelectLanguageModal from 'InteractiveImport/Language/SelectLanguageModal';
 import SelectMovieModal from 'InteractiveImport/Movie/SelectMovieModal';
+import SelectMovieVersionModal from 'InteractiveImport/MovieVersion/SelectMovieVersionModal';
 import SelectQualityModal from 'InteractiveImport/Quality/SelectQualityModal';
 import SelectReleaseGroupModal from 'InteractiveImport/ReleaseGroup/SelectReleaseGroupModal';
 import Language from 'Language/Language';
@@ -63,6 +64,7 @@ import styles from './InteractiveImportModalContent.css';
 type SelectType =
   | 'select'
   | 'movie'
+  | 'movieVersion'
   | 'releaseGroup'
   | 'quality'
   | 'language'
@@ -280,7 +282,9 @@ function InteractiveImportModalContent(
 
     // Only movies with more than one version need a version to be picked
     const showMovieVersion = items.some(
-      (item) => (item.movieVersions?.length ?? 0) > 1
+      (item) =>
+        (item.movieVersions?.length ?? 0) > 1 ||
+        (item.movieVersionId ?? 0) !== 0
     );
 
     if (!showMovieVersion) {
@@ -308,6 +312,16 @@ function InteractiveImportModalContent(
     return getSelectedIds(selectedState);
   }, [selectedState]);
 
+  // The selected files can be assigned to a version, or to a new one, when they're all for the same movie
+  const selectedMovieItem = useMemo(() => {
+    const selectedItems = items.filter((item) => selectedIds.includes(item.id));
+    const movieIds = new Set(selectedItems.map((item) => item.movie?.id));
+
+    return movieIds.size === 1 && selectedItems[0].movie
+      ? selectedItems[0]
+      : undefined;
+  }, [items, selectedIds]);
+
   const bulkSelectOptions = useMemo(() => {
     const options: SelectInputOption[] = [
       {
@@ -333,6 +347,13 @@ function InteractiveImportModalContent(
       },
     ];
 
+    if (selectedMovieItem) {
+      options.splice(1, 0, {
+        key: 'movieVersion',
+        value: translate('SelectMovieVersion'),
+      });
+    }
+
     if (allowMovieChange) {
       options.splice(1, 0, {
         key: 'movie',
@@ -341,7 +362,7 @@ function InteractiveImportModalContent(
     }
 
     return options;
-  }, [allowMovieChange]);
+  }, [allowMovieChange, selectedMovieItem]);
 
   useEffect(
     () => {
@@ -627,6 +648,22 @@ function InteractiveImportModalContent(
     [selectedIds, setSelectModalOpen, dispatch]
   );
 
+  const onMovieVersionSelect = useCallback(
+    (movieVersionId: number) => {
+      dispatch(
+        updateInteractiveImportItems({
+          ids: selectedIds,
+          movieVersionId,
+        })
+      );
+
+      dispatch(reprocessInteractiveImportItems({ ids: selectedIds }));
+
+      setSelectModalOpen(null);
+    },
+    [selectedIds, dispatch]
+  );
+
   const onReleaseGroupSelect = useCallback(
     (releaseGroup: string) => {
       dispatch(
@@ -838,6 +875,18 @@ function InteractiveImportModalContent(
         onMovieSelect={onMovieSelect}
         onModalClose={onSelectModalClose}
       />
+
+      {selectedMovieItem ? (
+        <SelectMovieVersionModal
+          isOpen={selectModalOpen === 'movieVersion'}
+          movieId={selectedMovieItem.movie?.id}
+          movieVersionId={selectedMovieItem.movieVersionId ?? 0}
+          movieVersions={selectedMovieItem.movieVersions ?? []}
+          modalTitle={modalTitle}
+          onMovieVersionSelect={onMovieVersionSelect}
+          onModalClose={onSelectModalClose}
+        />
+      ) : null}
 
       <SelectReleaseGroupModal
         isOpen={selectModalOpen === 'releaseGroup'}

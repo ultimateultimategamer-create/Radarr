@@ -61,6 +61,43 @@ namespace NzbDrone.Api.Test.v3.Indexers
         }
 
         [Test]
+        public async Task should_grab_a_release_added_as_a_new_pinned_version()
+        {
+            var pinned = new MovieVersion { Id = 8, MovieId = 5, Name = "IMAX", Pinned = true };
+            var pinnedView = _movie.ForVersion(pinned);
+            _cached.Movie = _movie;
+            _cached.ParsedMovieInfo = new ParsedMovieInfo { Edition = "IMAX" };
+
+            Mocker.GetMock<IMovieVersionService>().Setup(s => s.AddPinnedVersion(_movie, null, "IMAX")).Returns(pinned);
+            Mocker.GetMock<IMovieVersionService>().Setup(s => s.GetVersionView(_movie, 8)).Returns(pinnedView);
+
+            await Subject.DownloadRelease(new ReleaseResource { IndexerId = 1, Guid = "release", MovieId = 5, AddAsMovieVersion = true });
+
+            Mocker.GetMock<IDownloadService>()
+                  .Verify(s => s.DownloadReport(It.Is<RemoteMovie>(r => r.Movie == pinnedView), null), Times.Once());
+            Mocker.GetMock<IMovieVersionService>().Verify(s => s.RemoveVersion(It.IsAny<int>()), Times.Never());
+            _cached.Movie.Should().BeSameAs(_movie);
+        }
+
+        [Test]
+        public void should_remove_the_new_version_when_the_release_cannot_be_grabbed()
+        {
+            var pinned = new MovieVersion { Id = 8, MovieId = 5, Name = "Director's Cut", Pinned = true };
+            _cached.Movie = _movie;
+
+            Mocker.GetMock<IMovieVersionService>().Setup(s => s.AddPinnedVersion(_movie, "Director's Cut", null)).Returns(pinned);
+            Mocker.GetMock<IMovieVersionService>().Setup(s => s.GetVersionView(_movie, 8)).Returns(_movie.ForVersion(pinned));
+            Mocker.GetMock<IDownloadService>()
+                  .Setup(s => s.DownloadReport(It.IsAny<RemoteMovie>(), null))
+                  .ThrowsAsync(new InvalidOperationException("Download client unavailable"));
+
+            Assert.ThrowsAsync<InvalidOperationException>(() => Subject.DownloadRelease(
+                new ReleaseResource { IndexerId = 1, Guid = "release", MovieId = 5, AddAsMovieVersion = true, MovieVersionName = "Director's Cut" }));
+
+            Mocker.GetMock<IMovieVersionService>().Verify(s => s.RemoveVersion(8), Times.Once());
+        }
+
+        [Test]
         public void should_not_grab_for_a_removed_version()
         {
             Mocker.GetMock<IMovieVersionService>()

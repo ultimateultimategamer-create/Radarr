@@ -237,8 +237,9 @@ namespace NzbDrone.Core.DecisionEngine
 
                 if (!singleVersion)
                 {
+                    // Pinned versions only get the releases picked for them in a search for that version
                     var views = _movieVersionService.GetAdditionalVersionViews(movie) ?? Enumerable.Empty<Movie>();
-                    cachedVersions.AddRange(views.Where(v => v.QualityProfile != null));
+                    cachedVersions.AddRange(views.Where(v => v.QualityProfile != null && v.Version?.Pinned != true));
                 }
 
                 versionsByMovie[movie.Id] = cachedVersions;

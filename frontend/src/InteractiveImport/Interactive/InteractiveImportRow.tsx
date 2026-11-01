@@ -297,7 +297,8 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
   const movieVersion = movieVersions.find(
     (version) => getMovieVersionKey(version) === movieVersionId
   );
-  const canChangeMovieVersion = movieVersions.length > 1;
+  // A new version can be added for the file even when the movie has a single version
+  const canChangeMovieVersion = !!movie;
 
   const showMoviePlaceholder = isSelected && !movie;
   const showReleaseGroupPlaceholder = isSelected && !releaseGroup;
@@ -442,6 +443,7 @@ function InteractiveImportRow(props: InteractiveImportRowProps) {
 
       <SelectMovieVersionModal
         isOpen={selectModalOpen === 'movieVersion'}
+        movieId={movie?.id}
         movieVersionId={movieVersionId}
         movieVersions={movieVersions}
         modalTitle={modalTitle}

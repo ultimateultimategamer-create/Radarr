@@ -32,6 +32,7 @@ namespace NzbDrone.Core.Movies.Versions
         Movie GetVersionView(Movie movie, int movieVersionId);
         MovieVersion Add(MovieVersion version);
         MovieVersion AddVersion(Movie movie, int qualityProfileId, string name = null, List<int> requiredCustomFormatIds = null);
+        MovieVersion AddPinnedVersion(Movie movie, string name, string suggestedName = null);
         MovieVersion UpdateVersion(int id, string name, int qualityProfileId, List<int> requiredCustomFormatIds);
         void RemoveVersion(int id);
         MovieVersion Update(MovieVersion version);
@@ -198,11 +199,11 @@ namespace NzbDrone.Core.Movies.Versions
         // Every version is stored in the movie's own folder, next to the files of the other versions
         public MovieVersion AddVersion(Movie movie, int qualityProfileId, string name = null, List<int> requiredCustomFormatIds = null)
         {
-            // Movies added in bulk before versions existed may not have their primary version yet
-            var existing = _repository.FindByMovieId(movie.Id);
+            // Movies added in bulk before versions existed may not have their primary version yet,
+            // create it first so the new version's name is checked against it too.
+            var existing = EnsurePrimary(movie);
             name = name?.Trim();
             ValidateVersion(existing, 0, name, qualityProfileId, requiredCustomFormatIds);
-            EnsurePrimary(movie);
 
             _logger.Info("Adding version of {0} with quality profile {1}", movie, qualityProfileId);
 
@@ -212,6 +213,33 @@ namespace NzbDrone.Core.Movies.Versions
                 Name = name,
                 QualityProfileId = qualityProfileId,
                 RequiredCustomFormatIds = requiredCustomFormatIds?.Distinct().ToList() ?? new List<int>(),
+                Path = movie.Path
+            });
+        }
+
+        // A version added by hand, from an interactive search grab or a manual import. It shares the movie's folder and
+        // quality profile, and only gets the files picked for it: it's never searched for, upgraded or given files automatically.
+        public MovieVersion AddPinnedVersion(Movie movie, string name, string suggestedName = null)
+        {
+            var existing = EnsurePrimary(movie);
+            name = name?.Trim();
+
+            if (name.IsNullOrWhiteSpace())
+            {
+                name = GetUnusedName(existing, suggestedName?.Trim());
+            }
+
+            ValidateVersion(existing, 0, name, movie.QualityProfileId, null);
+
+            _logger.Info("Adding pinned version '{0}' of {1}", name, movie);
+
+            return _repository.Insert(new MovieVersion
+            {
+                MovieId = movie.Id,
+                Name = name,
+                QualityProfileId = movie.QualityProfileId,
+                RequiredCustomFormatIds = new List<int>(),
+                Pinned = true,
                 Path = movie.Path
             });
         }
@@ -270,10 +298,7 @@ namespace NzbDrone.Core.Movies.Versions
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Delete the file of this version before removing it");
             }
 
-            var pending = (_pendingReleaseRepository.AllByMovieId(version.MovieId) ?? new List<PendingRelease>())
-                .Where(p => p.AdditionalInfo?.MovieVersionId == id).Select(p => p.Id).ToList();
-            _pendingReleaseRepository.DeleteMany(pending);
-            _repository.Delete(version);
+            DeleteVersion(version);
         }
 
         public MovieVersion Update(MovieVersion version)
@@ -353,16 +378,45 @@ namespace NzbDrone.Core.Movies.Versions
 
         public void Handle(MovieFileDeletedEvent message)
         {
-            var versions = _repository.FindByMovieId(message.MovieFile.MovieId)
-                                      .Where(v => v.MovieFileId == message.MovieFile.Id)
-                                      .ToList();
+            var movieFile = message.MovieFile;
+            var versions = _repository.FindByMovieId(movieFile.MovieId).OrderBy(v => v.Id).ToList();
+            var primaryId = versions.FirstOrDefault()?.Id ?? 0;
+            var updated = new List<MovieVersion>();
+            var removed = new List<MovieVersion>();
 
-            foreach (var version in versions)
+            // Only the versions whose current file this was
+            foreach (var version in versions.Where(v => v.MovieFileId == movieFile.Id))
             {
-                version.MovieFileId = 0;
+                // A pinned version only exists to hold its file, so deleting that file by hand removes the version as well,
+                // unless another file of the version is left. Upgrades and re-imports replace the file and keep the version,
+                // a file missing from disk keeps it too.
+                if (message.Reason == DeleteMediaFileReason.Manual && version.Pinned && version.Id != primaryId && version.Id == movieFile.MovieVersionId)
+                {
+                    var otherFiles = GetOtherFilesOfVersion(version, movieFile.Id);
+
+                    if (otherFiles.Empty())
+                    {
+                        removed.Add(version);
+                        continue;
+                    }
+
+                    version.MovieFileId = otherFiles.Max(f => f.Id);
+                }
+                else
+                {
+                    version.MovieFileId = 0;
+                }
+
+                updated.Add(version);
             }
 
-            _repository.UpdateMany(versions);
+            _repository.UpdateMany(updated);
+
+            foreach (var version in removed)
+            {
+                _logger.Info("Removing pinned version '{0}' of movie {1} along with its file", version.Name, version.MovieId);
+                DeleteVersion(version);
+            }
         }
 
         public void HandleAsync(MoviesDeletedEvent message)
@@ -373,6 +427,46 @@ namespace NzbDrone.Core.Movies.Versions
         private List<MovieVersion> GetAdditionalVersions(int movieId)
         {
             return _repository.FindByMovieId(movieId).OrderBy(v => v.Id).Skip(1).ToList();
+        }
+
+        // The files of the version other than the one being deleted, such as a file imported for it before its current one
+        private List<MovieFile> GetOtherFilesOfVersion(MovieVersion version, int deletedMovieFileId)
+        {
+            return (_mediaFileRepository.GetFilesByMovie(version.MovieId) ?? new List<MovieFile>())
+                .Where(f => f.MovieVersionId == version.Id && f.Id != deletedMovieFileId)
+                .ToList();
+        }
+
+        // Removes the version along with the releases waiting to be grabbed for it
+        private void DeleteVersion(MovieVersion version)
+        {
+            var pending = (_pendingReleaseRepository.AllByMovieId(version.MovieId) ?? new List<PendingRelease>())
+                .Where(p => p.AdditionalInfo?.MovieVersionId == version.Id).Select(p => p.Id).ToList();
+
+            _pendingReleaseRepository.DeleteMany(pending);
+            _repository.Delete(version);
+        }
+
+        // The suggested name, followed by a number when another version of the movie already uses it ("2160p 2")
+        private static string GetUnusedName(List<MovieVersion> existing, string suggestedName)
+        {
+            var baseName = suggestedName.IsNullOrWhiteSpace() ? "Version" : suggestedName;
+
+            if (baseName.Length > 90)
+            {
+                baseName = baseName.Substring(0, 90).Trim();
+            }
+
+            var taken = existing.Select(v => v.Name ?? string.Empty).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var name = baseName;
+            var number = 2;
+
+            while (taken.Contains(name))
+            {
+                name = $"{baseName} {number++}";
+            }
+
+            return name;
         }
 
         private Movie BuildView(Movie movie, MovieVersion version)
@@ -450,9 +544,24 @@ namespace NzbDrone.Core.Movies.Versions
 
             foreach (var version in versions.Skip(1))
             {
+                var changed = false;
+
                 if (version.Path != movie.Path)
                 {
                     version.Path = movie.Path;
+                    changed = true;
+                }
+
+                // A pinned version has no quality profile of its own, it follows the movie's.
+                // Otherwise a profile the movie left behind would stay in use and couldn't be deleted.
+                if (version.Pinned && version.QualityProfileId != movie.QualityProfileId)
+                {
+                    version.QualityProfileId = movie.QualityProfileId;
+                    changed = true;
+                }
+
+                if (changed)
+                {
                     updated.Add(version);
                 }
             }

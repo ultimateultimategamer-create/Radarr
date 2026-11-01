@@ -87,8 +87,16 @@ namespace Radarr.Api.V3.Indexers
             // The request owns its target. A later search must not change which version is grabbed.
             var targetMovieId = release.MovieId ?? cachedMovie.Movie?.Id;
             var targetVersionId = release.MovieVersionId ?? cachedMovie.Movie?.MovieVersionId ?? 0;
+            var newVersion = AddVersionForRelease(release, targetMovieId, cachedMovie);
+
+            if (newVersion != null)
+            {
+                targetVersionId = newVersion.Id;
+            }
+
             var targetMovie = targetMovieId.HasValue ? GetMovieForRelease(targetMovieId.Value, targetVersionId) : null;
             var remoteMovie = cachedMovie.CloneForMovie(targetMovie);
+            var grabbed = false;
 
             try
             {
@@ -112,7 +120,7 @@ namespace Radarr.Api.V3.Indexers
                         ReleaseSource = remoteMovie.ReleaseSource
                     };
 
-                    remoteMovie.Movie = GetMovieForRelease(release.MovieId!.Value, release.MovieVersionId);
+                    remoteMovie.Movie = GetMovieForRelease(release.MovieId!.Value, newVersion?.Id ?? release.MovieVersionId);
                     remoteMovie.ParsedMovieInfo.Quality = release.Quality;
                     remoteMovie.Languages = release.Languages;
                 }
@@ -121,7 +129,7 @@ namespace Radarr.Api.V3.Indexers
                 {
                     if (release.MovieId.HasValue)
                     {
-                        remoteMovie.Movie = GetMovieForRelease(release.MovieId.Value, release.MovieVersionId);
+                        remoteMovie.Movie = GetMovieForRelease(release.MovieId.Value, newVersion?.Id ?? release.MovieVersionId);
                     }
                     else
                     {
@@ -130,14 +138,47 @@ namespace Radarr.Api.V3.Indexers
                 }
 
                 await _downloadService.DownloadReport(remoteMovie, release.DownloadClientId);
+                grabbed = true;
             }
             catch (ReleaseDownloadException ex)
             {
                 _logger.Error(ex, ex.Message);
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Getting release from indexer failed");
             }
+            finally
+            {
+                // A version added for this release is removed again when the release couldn't be grabbed
+                if (!grabbed && newVersion != null)
+                {
+                    _movieVersionService.RemoveVersion(newVersion.Id);
+                }
+            }
 
             return TypedResults.Ok(release);
+        }
+
+        // Adds the pinned version the release is grabbed for, when the release is added as a new version of the movie
+        private MovieVersion AddVersionForRelease(ReleaseResource release, int? movieId, RemoteMovie remoteMovie)
+        {
+            if (release.AddAsMovieVersion != true)
+            {
+                return null;
+            }
+
+            if (!movieId.HasValue)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to find matching movie, will need to be manually provided");
+            }
+
+            return _movieVersionService.AddPinnedVersion(_movieService.GetMovie(movieId.Value), release.MovieVersionName, GetSuggestedVersionName(remoteMovie));
+        }
+
+        // The release's edition when it names one (Director's Cut, IMAX...), its quality otherwise
+        private static string GetSuggestedVersionName(RemoteMovie remoteMovie)
+        {
+            var edition = remoteMovie?.ParsedMovieInfo?.Edition;
+
+            return edition.IsNotNullOrWhiteSpace() ? edition.Trim() : remoteMovie?.ParsedMovieInfo?.Quality?.Quality?.Name;
         }
 
         [HttpGet]

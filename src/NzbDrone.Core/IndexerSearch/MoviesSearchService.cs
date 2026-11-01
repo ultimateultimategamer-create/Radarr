@@ -82,9 +82,9 @@ namespace NzbDrone.Core.IndexerSearch
             var queued = GetQueuedVersions();
             var missing = movies.Where(e => !queued.Contains((e.Id, 0))).ToList();
 
-            // Additional versions without a file are searched for as well
+            // Additional versions without a file are searched for as well, except pinned versions which only get the releases picked for them
             var additionalVersions = _movieVersionService.GetAllAdditionalVersions() ?? new List<MovieVersion>();
-            var missingVersionMovieIds = additionalVersions.Where(v => !v.HasFile && !queued.Contains((v.MovieId, v.Id)))
+            var missingVersionMovieIds = additionalVersions.Where(v => !v.Pinned && !v.HasFile && !queued.Contains((v.MovieId, v.Id)))
                                                            .Select(v => v.MovieId)
                                                            .ToList();
 
@@ -127,7 +127,7 @@ namespace NzbDrone.Core.IndexerSearch
         private List<int> GetVersionsWhereCutoffUnmet(HashSet<(int MovieId, int MovieVersionId)> queued)
         {
             var versions = (_movieVersionService.GetAllAdditionalVersions() ?? new List<MovieVersion>())
-                .Where(v => v.HasFile && !queued.Contains((v.MovieId, v.Id)))
+                .Where(v => !v.Pinned && v.HasFile && !queued.Contains((v.MovieId, v.Id)))
                 .ToList();
 
             if (versions.Empty())

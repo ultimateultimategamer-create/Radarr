@@ -1,10 +1,12 @@
 using System.Collections.Generic;
 using NLog;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.History;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Download
@@ -13,14 +15,17 @@ namespace NzbDrone.Core.Download
     {
         private readonly IConfigService _configService;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IMovieVersionService _movieVersionService;
         private readonly Logger _logger;
 
         public RedownloadFailedDownloadService(IConfigService configService,
                                                IManageCommandQueue commandQueueManager,
+                                               IMovieVersionService movieVersionService,
                                                Logger logger)
         {
             _configService = configService;
             _commandQueueManager = commandQueueManager;
+            _movieVersionService = movieVersionService;
             _logger = logger;
         }
 
@@ -45,11 +50,38 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
+            if (IsForPinnedOrRemovedVersion(message))
+            {
+                _logger.Debug("Failed download was for a pinned or removed version of the movie, not searching again");
+                return;
+            }
+
             if (message.MovieId != 0)
             {
                 _logger.Debug("Failed download contains a movie, searching again.");
                 _commandQueueManager.Push(new MoviesSearchCommand { MovieIds = new List<int> { message.MovieId } });
             }
+        }
+
+        // A pinned version only gets the releases picked for it, and a search of the movie never looks for it:
+        // searching again would grab a release for another version instead. The same goes for a version removed since.
+        private bool IsForPinnedOrRemovedVersion(DownloadFailedEvent message)
+        {
+            var movieVersionId = message.TrackedDownload?.RemoteMovie?.Movie?.MovieVersionId ?? 0;
+
+            if (movieVersionId == 0 && int.TryParse(message.Data?.GetValueOrDefault(MovieHistory.MOVIE_VERSION_ID), out var grabbedMovieVersionId))
+            {
+                movieVersionId = grabbedMovieVersionId;
+            }
+
+            if (movieVersionId <= 0)
+            {
+                return false;
+            }
+
+            var version = _movieVersionService.Find(movieVersionId);
+
+            return version == null || version.Pinned;
         }
     }
 }

@@ -105,6 +105,11 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
+        private static bool IsPinned(Movie movie)
+        {
+            return movie.IsVersionView && movie.Version?.Pinned == true;
+        }
+
         private List<string> ScanVersion(Movie movie, List<Movie> allVersions)
         {
             var rootFolder = _rootFolderService.GetBestRootFolderPath(movie.Path);
@@ -175,9 +180,15 @@ namespace NzbDrone.Core.MediaFiles
             unmappedFiles = unmappedFiles.Except(otherVersionsFiles, PathEqualityComparer.Instance).ToList();
 
             var decisionsStopwatch = Stopwatch.StartNew();
-            var decisions = _importDecisionMaker.GetImportDecisions(unmappedFiles, movie, false);
 
-            if (allVersions.Count(v => v.Path.PathEquals(movie.Path)) > 1 && decisions != null)
+            // Pinned versions only get the files picked for them by hand. The other versions sharing the folder
+            // only get the new files their rules point at.
+            var automaticVersions = allVersions.Where(v => v.Path.PathEquals(movie.Path) && !IsPinned(v)).ToList();
+            var decisions = IsPinned(movie)
+                ? new List<ImportDecision>()
+                : _importDecisionMaker.GetImportDecisions(unmappedFiles, movie, false);
+
+            if (automaticVersions.Count > 1 && decisions != null)
             {
                 decisions = decisions.Where(decision =>
                 {
@@ -187,7 +198,7 @@ namespace NzbDrone.Core.MediaFiles
                     }
 
                     var matches = MovieVersionMatcher.BestMatches(
-                        allVersions.Where(v => v.Path.PathEquals(movie.Path)),
+                        automaticVersions,
                         decision.LocalMovie.Quality.Quality,
                         decision.LocalMovie.CustomFormats);
 

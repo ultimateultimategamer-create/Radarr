@@ -104,5 +104,19 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         {
             Subject.GetUniqueFileName(_versionView, new MovieFile(), "MOVIE (2020)").Should().Be("MOVIE (2020) - HD-1080p");
         }
+
+        [Test]
+        public void should_name_additional_version_files_after_the_folder_and_the_version()
+        {
+            var view = _movie.ForVersion(new MovieVersion { Id = 7, MovieId = 5, Name = "Director's Cut", QualityProfileId = 1, Path = _movie.Path, Pinned = true });
+
+            Subject.GetFileName(view, new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) - Director's Cut");
+        }
+
+        [Test]
+        public void should_keep_the_naming_format_for_the_primary_version()
+        {
+            Subject.GetFileName(_movie, _primaryFile, "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) Bluray-1080p");
+        }
     }
 }

@@ -199,7 +199,7 @@ namespace NzbDrone.Core.MediaFiles
         private string BuildFileName(Movie movie, MovieFile movieFile)
         {
             var fileName = _filenameBuilder.BuildFileName(movie, movieFile);
-            var uniqueFileName = _movieVersionFileNameService.GetUniqueFileName(movie, movieFile, fileName);
+            var uniqueFileName = _movieVersionFileNameService.GetFileName(movie, movieFile, fileName);
 
             return uniqueFileName.IsNullOrWhiteSpace() ? fileName : uniqueFileName;
         }

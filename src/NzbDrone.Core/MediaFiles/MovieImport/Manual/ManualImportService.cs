@@ -245,11 +245,7 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             {
                 var trackedDownload = _trackedDownloadService.Find(downloadId);
                 downloadClientItem = trackedDownload.DownloadItem;
-
-                if (movie == null)
-                {
-                    movie = trackedDownload.RemoteMovie?.Movie;
-                }
+                movie = PreferGrabbedVersion(movie, trackedDownload);
             }
 
             if (movie == null)
@@ -299,9 +295,9 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
                     movie = _parsingService.GetMovie(relativeFile);
                 }
 
-                if (trackedDownload != null && movie == null)
+                if (trackedDownload != null)
                 {
-                    movie = trackedDownload?.RemoteMovie?.Movie;
+                    movie = PreferGrabbedVersion(movie, trackedDownload);
                 }
 
                 if (movie == null)
@@ -438,6 +434,20 @@ namespace NzbDrone.Core.MediaFiles.MovieImport.Manual
             item.CustomFormats = _formatCalculator.ParseCustomFormat(movieFile, movie);
 
             return item;
+        }
+
+        // A download grabbed for one of the movie's additional versions is imported into that version,
+        // unless the user picks another one. The tracked download's movie is used when no movie was found.
+        private static Movie PreferGrabbedVersion(Movie movie, TrackedDownload trackedDownload)
+        {
+            var grabbedMovie = trackedDownload?.RemoteMovie?.Movie;
+
+            if (movie == null)
+            {
+                return grabbedMovie;
+            }
+
+            return grabbedMovie is { IsVersionView: true } && grabbedMovie.Id == movie.Id ? grabbedMovie : movie;
         }
 
         // The movie itself, or the view of one of its additional versions

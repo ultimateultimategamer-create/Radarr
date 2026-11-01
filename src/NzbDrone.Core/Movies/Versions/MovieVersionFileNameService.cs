@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Organizer;
@@ -10,13 +11,13 @@ namespace NzbDrone.Core.Movies.Versions
 {
     public interface IMovieVersionFileNameService
     {
+        string GetFileName(Movie movie, MovieFile movieFile, string standardFileName);
         string GetUniqueFileName(Movie movie, MovieFile movieFile, string fileName);
     }
 
-    // Versions of a movie share its folder, so the file of one version must never take the name of another version's file.
-    // When the naming format gives two versions the same name (no quality in it, same quality for both...),
-    // the name gets the version's name appended: "Movie (2020) - Director's Cut.mkv", which Plex, Jellyfin and Emby
-    // all group as versions of the same movie.
+    // Versions of a movie share its folder. Files of additional versions are named after the folder and the version,
+    // and the file of one version never takes the name of another version's file: on a clash the version's name,
+    // then a number, is appended.
     public class MovieVersionFileNameService : IMovieVersionFileNameService
     {
         private readonly IMovieVersionService _movieVersionService;
@@ -30,6 +31,26 @@ namespace NzbDrone.Core.Movies.Versions
             _movieVersionService = movieVersionService;
             _mediaFileRepository = mediaFileRepository;
             _qualityProfileRepository = qualityProfileRepository;
+        }
+
+        // Files of additional versions are named after the movie's folder and the version, "Movie (2020) - Director's Cut",
+        // the naming Plex, Jellyfin and Emby expect for versions of one movie. The primary version keeps the naming format.
+        public string GetFileName(Movie movie, MovieFile movieFile, string standardFileName)
+        {
+            var fileName = standardFileName;
+
+            if (movie is { IsVersionView: true } && movie.Path.IsNotNullOrWhiteSpace())
+            {
+                var folderName = new OsPath(movie.Path).FileName;
+                var versionName = FileNameBuilder.CleanFileName(movie.Version?.Name ?? string.Empty).Trim();
+
+                if (folderName.IsNotNullOrWhiteSpace() && versionName.IsNotNullOrWhiteSpace())
+                {
+                    fileName = $"{folderName} - {versionName}";
+                }
+            }
+
+            return GetUniqueFileName(movie, movieFile, fileName);
         }
 
         public string GetUniqueFileName(Movie movie, MovieFile movieFile, string fileName)

@@ -1,9 +1,12 @@
+using System.Collections.Generic;
 using System.Net;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.MediaFiles.Commands;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Test.Common;
@@ -52,6 +55,23 @@ namespace NzbDrone.Api.Test.v3.MovieVersions
 
             _movie.QualityProfileId.Should().Be(3);
             Mocker.GetMock<IMovieService>().Verify(s => s.UpdateMovie(It.IsAny<Movie>()), Times.Never());
+        }
+
+        [Test]
+        public void should_add_a_pinned_version_without_rescanning_the_movie()
+        {
+            _resource.Pinned = true;
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.AddPinnedVersion(_movie, _resource.Name, null))
+                  .Returns(new MovieVersion { Id = 9, MovieId = 5, Name = _resource.Name, Pinned = true });
+
+            Subject.AddMovieVersion(_resource);
+
+            Mocker.GetMock<IMovieVersionService>().Verify(s => s.AddPinnedVersion(_movie, _resource.Name, null), Times.Once());
+            Mocker.GetMock<IMovieVersionService>()
+                  .Verify(s => s.AddVersion(It.IsAny<Movie>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<List<int>>()), Times.Never());
+            Mocker.GetMock<IManageCommandQueue>()
+                  .Verify(s => s.Push(It.IsAny<RescanMovieCommand>(), It.IsAny<CommandPriority>(), It.IsAny<CommandTrigger>()), Times.Never());
         }
 
         [Test]

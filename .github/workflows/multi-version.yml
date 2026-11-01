@@ -5,6 +5,7 @@ on:
     branches:
       - multi-version
       - codex/named-movie-versions
+      - pinned-versions
   pull_request:
     branches:
       - multi-version
@@ -116,3 +117,50 @@ jobs:
 
       - name: Build (includes TypeScript checks)
         run: yarn run build --env production
+
+  windows-package:
+    name: Windows x64 package
+    # A runnable Radarr for Windows (backend and UI) to try the pinned-versions branch on a PC
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/pinned-versions'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Build backend
+        shell: bash
+        run: ./build.sh --backend -r win-x64 -f net10.0
+
+      - name: Build UI
+        shell: bash
+        run: ./build.sh --frontend
+
+      - name: Create package
+        shell: bash
+        run: ./build.sh --packages -r win-x64 -f net10.0
+
+      - name: Check package
+        shell: bash
+        run: |
+          test -f _artifacts/win-x64/net10.0/Radarr/Radarr.exe
+          test -f _artifacts/win-x64/net10.0/Radarr/UI/index.html
+          ls _artifacts/win-x64/net10.0/Radarr | head -50
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Radarr-pinned-versions-windows-x64
+          path: _artifacts/win-x64/net10.0
+          retention-days: 30

@@ -143,15 +143,19 @@ function InteractiveSearch({ searchPayload }: InteractiveSearchProps) {
   const dispatch = useDispatch();
   const { versions } = useMovieVersions(searchPayload.movieId);
 
-  // Without a version to search for, each release is matched to the first version of the movie that wants it
+  // Without a version to search for, each release is matched to the first version of the movie that wants it.
+  // Pinned versions only get the releases picked for them, so a movie with only pinned versions shows no labels.
   const versionNames = useMemo(() => {
     const result: Record<number, string> = {};
+    const automaticVersions = versions.filter(
+      (version) => version.isPrimary || !version.pinned
+    );
 
-    if (versions.length < 2 || searchPayload.movieVersionId) {
+    if (automaticVersions.length < 2 || searchPayload.movieVersionId) {
       return result;
     }
 
-    versions.forEach((version) => {
+    automaticVersions.forEach((version) => {
       result[version.isPrimary ? 0 : version.id] = version.name;
     });
 

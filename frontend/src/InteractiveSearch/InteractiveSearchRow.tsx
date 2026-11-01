@@ -3,6 +3,7 @@ import { useSelector } from 'react-redux';
 import ProtocolLabel from 'Activity/Queue/ProtocolLabel';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
+import IconButton from 'Components/Link/IconButton';
 import Link from 'Components/Link/Link';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -21,6 +22,7 @@ import formatAge from 'Utilities/Number/formatAge';
 import formatBytes from 'Utilities/Number/formatBytes';
 import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
 import translate from 'Utilities/String/translate';
+import AddReleaseAsVersionModal from './AddAsVersion/AddReleaseAsVersionModal';
 import InteractiveSearchPayload from './InteractiveSearchPayload';
 import OverrideMatchModal from './OverrideMatch/OverrideMatchModal';
 import Peers from './Peers';
@@ -98,6 +100,7 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     customFormats,
     mappedMovieId,
     mappedMovieVersionId = 0,
+    edition,
     indexerFlags = [],
     rejections = [],
     downloadAllowed,
@@ -115,6 +118,11 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
 
   const [isConfirmGrabModalOpen, setIsConfirmGrabModalOpen] = useState(false);
   const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
+  const [isAddAsVersionModalOpen, setIsAddAsVersionModalOpen] = useState(false);
+
+  // A release found by a search for the whole movie can be kept as a new version, next to the movie's file
+  const canAddAsVersion =
+    !!searchPayload.movieId && !searchPayload.movieVersionId;
 
   const isBlocklisted = useMemo(() => {
     return (
@@ -176,6 +184,14 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
   const onOverrideModalClose = useCallback(() => {
     setIsOverrideModalOpen(false);
   }, [setIsOverrideModalOpen]);
+
+  const onAddAsVersionPress = useCallback(() => {
+    setIsAddAsVersionModalOpen(true);
+  }, [setIsAddAsVersionModalOpen]);
+
+  const onAddAsVersionModalClose = useCallback(() => {
+    setIsAddAsVersionModalOpen(false);
+  }, [setIsAddAsVersionModalOpen]);
 
   return (
     <TableRow>
@@ -350,6 +366,14 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
             />
           </div>
         </Link>
+
+        {canAddAsVersion ? (
+          <IconButton
+            name={icons.ADD}
+            title={translate('AddAsNewVersion')}
+            onPress={onAddAsVersionPress}
+          />
+        ) : null}
       </TableRowCell>
 
       <ConfirmModal
@@ -376,6 +400,18 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
         grabError={grabError}
         onModalClose={onOverrideModalClose}
       />
+
+      {canAddAsVersion ? (
+        <AddReleaseAsVersionModal
+          isOpen={isAddAsVersionModalOpen}
+          guid={guid}
+          indexerId={indexerId}
+          movieId={searchPayload.movieId}
+          title={title}
+          suggestedName={edition || quality.quality.name}
+          onModalClose={onAddAsVersionModalClose}
+        />
+      ) : null}
     </TableRow>
   );
 }

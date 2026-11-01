@@ -99,7 +99,6 @@ import MovieReleaseDates from './MovieReleaseDates';
 import MovieStatusLabel from './MovieStatusLabel';
 import MovieTags from './MovieTags';
 import MovieTitlesTable from './Titles/MovieTitlesTable';
-import AddMovieVersionModal from './Versions/AddMovieVersionModal';
 import useMovieVersions from './Versions/useMovieVersions';
 import styles from './MovieDetails.css';
 
@@ -262,7 +261,6 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
   const [isEditMovieModalOpen, setIsEditMovieModalOpen] = useState(false);
   const [isDeleteMovieModalOpen, setIsDeleteMovieModalOpen] = useState(false);
   const [isMovieHistoryModalOpen, setIsMovieHistoryModalOpen] = useState(false);
-  const [isAddVersionModalOpen, setIsAddVersionModalOpen] = useState(false);
   const { versions, refetchVersions, removeVersion, removeError } =
     useMovieVersions(movieId);
   const [titleRef, { width: titleWidth }] = useMeasure();
@@ -273,19 +271,6 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
   const handleOrganizePress = useCallback(() => {
     setIsOrganizeModalOpen(true);
   }, []);
-
-  const handleAddVersionPress = useCallback(() => {
-    setIsAddVersionModalOpen(true);
-  }, []);
-
-  const handleAddVersionModalClose = useCallback(() => {
-    setIsAddVersionModalOpen(false);
-  }, []);
-
-  const handleVersionAdded = useCallback(() => {
-    setIsAddVersionModalOpen(false);
-    refetchVersions();
-  }, [refetchVersions]);
 
   useEffect(() => {
     // Files are attached to their version on import, keep the grouping up to date
@@ -632,12 +617,6 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
             onPress={handleMovieHistoryPress}
           />
 
-          <PageToolbarButton
-            label={translate('AddVersion')}
-            iconName={icons.ADD}
-            onPress={handleAddVersionPress}
-          />
-
           <PageToolbarSeparator />
 
           <PageToolbarButton
@@ -965,13 +944,6 @@ function MovieDetails({ movieId }: MovieDetailsProps) {
           isOpen={isOrganizeModalOpen}
           movieId={id}
           onModalClose={handleOrganizeModalClose}
-        />
-
-        <AddMovieVersionModal
-          isOpen={isAddVersionModalOpen}
-          movieId={id}
-          onVersionAdded={handleVersionAdded}
-          onModalClose={handleAddVersionModalClose}
         />
 
         <EditMovieModal

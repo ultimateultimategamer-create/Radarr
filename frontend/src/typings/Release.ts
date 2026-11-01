@@ -23,6 +23,7 @@ interface Release {
   customFormatScore: number;
   mappedMovieId?: number;
   mappedMovieVersionId?: number;
+  edition?: string;
   indexerFlags: string[];
   rejections: string[];
   history?: ReleaseHistory;

@@ -71,7 +71,7 @@
 .download {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
 
-  width: 80px;
+  width: 110px;
 }
 
 .manualDownloadContent {

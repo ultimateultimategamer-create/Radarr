@@ -49,6 +49,9 @@ function AddMovieVersionModalContent({
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // A pinned version keeps the file picked for it, only its name matters
+  const isPinned = !!version?.pinned;
+
   useEffect(() => {
     dispatch(fetchCustomFormats());
   }, [dispatch]);
@@ -115,7 +118,11 @@ function AddMovieVersionModalContent({
       <ModalBody>
         {saveError ? <Alert kind={kinds.DANGER}>{saveError}</Alert> : null}
 
-        <Alert kind={kinds.INFO}>{translate('MovieVersionFolderInfo')}</Alert>
+        <Alert kind={kinds.INFO}>
+          {translate(
+            isPinned ? 'PinnedMovieVersionInfo' : 'MovieVersionFolderInfo'
+          )}
+        </Alert>
 
         <Form>
           <FormGroup>
@@ -125,38 +132,48 @@ function AddMovieVersionModalContent({
               type={inputTypes.TEXT}
               name="name"
               value={name}
-              helpText={translate('MovieVersionNameHelpText')}
+              helpText={translate(
+                isPinned
+                  ? 'PinnedMovieVersionNameHelpText'
+                  : 'MovieVersionNameHelpText'
+              )}
               onChange={handleNameChange}
             />
           </FormGroup>
 
-          <FormGroup>
-            <FormLabel>{translate('QualityProfile')}</FormLabel>
+          {isPinned ? null : (
+            <>
+              <FormGroup>
+                <FormLabel>{translate('QualityProfile')}</FormLabel>
 
-            <FormInputGroup
-              type={inputTypes.QUALITY_PROFILE_SELECT}
-              name="qualityProfileId"
-              value={qualityProfileId}
-              helpText={translate('MovieVersionQualityProfileHelpText')}
-              onChange={handleQualityProfileChange}
-            />
-          </FormGroup>
+                <FormInputGroup
+                  type={inputTypes.QUALITY_PROFILE_SELECT}
+                  name="qualityProfileId"
+                  value={qualityProfileId}
+                  helpText={translate('MovieVersionQualityProfileHelpText')}
+                  onChange={handleQualityProfileChange}
+                />
+              </FormGroup>
 
-          <FormGroup>
-            <FormLabel>{translate('MovieVersionRequiredFormats')}</FormLabel>
+              <FormGroup>
+                <FormLabel>
+                  {translate('MovieVersionRequiredFormats')}
+                </FormLabel>
 
-            <FormInputGroup
-              type={inputTypes.SELECT}
-              name="requiredCustomFormatIds"
-              value={requiredCustomFormatIds}
-              values={customFormats.map((format) => ({
-                key: format.id,
-                value: format.name,
-              }))}
-              helpText={translate('MovieVersionRequiredFormatsHelpText')}
-              onChange={handleFormatsChange}
-            />
-          </FormGroup>
+                <FormInputGroup
+                  type={inputTypes.SELECT}
+                  name="requiredCustomFormatIds"
+                  value={requiredCustomFormatIds}
+                  values={customFormats.map((format) => ({
+                    key: format.id,
+                    value: format.name,
+                  }))}
+                  helpText={translate('MovieVersionRequiredFormatsHelpText')}
+                  onChange={handleFormatsChange}
+                />
+              </FormGroup>
+            </>
+          )}
         </Form>
       </ModalBody>
 
