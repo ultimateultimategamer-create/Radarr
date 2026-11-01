@@ -149,6 +149,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             _misses.Clear();
         }
 
+        // Which server a connection reaches is known for an hour, and asked again before anything in it is changed
         private string GetServerId(PlexServerSettings settings)
         {
             var address = $"{(settings.UseSsl ? "https" : "http")}://{settings.Host}:{settings.Port}{settings.UrlBase}";
@@ -169,6 +170,35 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             _servers[address] = new KnownServer { Id = serverId, Since = now };
 
             return serverId;
+        }
+
+        // Checks the connection still reaches the server, as the server at an address can change. If it doesn't, the
+        // servers are asked again on the next run.
+        private bool Confirm(Server server)
+        {
+            if (server.Confirmed)
+            {
+                return true;
+            }
+
+            string serverId = null;
+
+            if (!TryInPlex($"server:{server.Id}", server.Name, () => serverId = _plexServerProxy.GetMachineIdentifier(server.Settings)))
+            {
+                return false;
+            }
+
+            if (serverId != server.Id)
+            {
+                _servers.Clear();
+                _logger.Debug("The Plex server at {0} has changed, its labels are looked at again on the next run", server.Settings.Host);
+
+                return false;
+            }
+
+            server.Confirmed = true;
+
+            return true;
         }
 
         // Extra versions whose file is named as an edition, and the movies of those and of recorded labels
@@ -245,6 +275,11 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                 .Where(r => !labeled.Contains(r.MovieVersionId) && server.Connections.Any(c => AppliesTo(c, FindMovie(library, r.MovieId))))
                 .ToList();
 
+            if (taking.Empty() || !Confirm(server))
+            {
+                return new HashSet<int>();
+            }
+
             // A label stays recorded until it's taken off, so it's tried again on the next run when Plex can't be reached
             foreach (var record in taking)
             {
@@ -264,7 +299,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                 .Where(v => server.Labeling.Any(c => AppliesTo(c, v.Movie)) && IsDue(server.Id, v, RecordsOf(records, v), now))
                 .ToList();
 
-            if (due.Empty())
+            if (due.Empty() || !Confirm(server))
             {
                 return;
             }
@@ -704,6 +739,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         private class Server
         {
             public string Id { get; set; }
+            public bool Confirmed { get; set; }
             public List<NotificationDefinition> Connections { get; } = new();
             public List<NotificationDefinition> Labeling { get; } = new();
 

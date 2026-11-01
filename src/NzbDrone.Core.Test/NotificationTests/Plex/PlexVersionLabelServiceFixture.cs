@@ -458,6 +458,23 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
+        public void should_not_change_items_when_another_server_answers_at_the_address()
+        {
+            Run();
+
+            // Another server now answers at the same address, while the first one is still remembered for it
+            var unrelated = GivenPlexMovie("101", "Another Movie", "IMAX", @"E:\Films\Another Movie (2001)\Another Movie (2001) {edition-IMAX}.mkv");
+            _plexItems = new List<PlexMovie> { unrelated };
+            _serverId = "server-b";
+            _settings.LabelVersions = false;
+
+            Run();
+
+            unrelated.Title.Should().Be("Another Movie");
+            _records.Should().ContainSingle(r => r.ServerId == "server-a");
+        }
+
+        [Test]
         public void should_keep_labels_another_connection_to_the_same_server_still_adds()
         {
             var otherSettings = new PlexServerSettings { Host = "plex.local", Port = 32400, LabelVersions = true };
