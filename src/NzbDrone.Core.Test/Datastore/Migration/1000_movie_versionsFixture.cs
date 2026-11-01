@@ -5,6 +5,7 @@ using FluentAssertions;
 using NUnit.Framework;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Datastore.Migration;
+using NzbDrone.Core.Datastore.Migration.Framework;
 using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.Datastore.Migration
@@ -79,6 +80,41 @@ namespace NzbDrone.Core.Test.Datastore.Migration
 
             files.Single().MovieVersionId.Should().Be(0);
         }
+
+        [Test]
+        public void should_name_versions_when_upgrading_a_database_that_ran_the_first_versions_migration()
+        {
+            // Recreates what this fork's first migration, then numbered 244, left behind: versions without names
+            var db = WithTestDb(new MigrationContext(MigrationType, MigrationVersion)
+            {
+                BeforeMigration = m =>
+                {
+                    if (m is mediainfo_multiple_streams earlier)
+                    {
+                        earlier.Create.TableForModel("MovieVersions")
+                               .WithColumn("MovieId").AsInt32().Indexed()
+                               .WithColumn("QualityProfileId").AsInt32()
+                               .WithColumn("Path").AsString().Nullable()
+                               .WithColumn("MovieFileId").AsInt32().WithDefaultValue(0);
+
+                        earlier.Alter.Table("MovieFiles").AddColumn("MovieVersionId").AsInt32().WithDefaultValue(0);
+
+                        earlier.Insert.IntoTable("MovieVersions").Row(new { MovieId = 5, QualityProfileId = 41, Path = "/Movies/Movie (2020)", MovieFileId = 0 });
+                        earlier.Insert.IntoTable("MovieVersions").Row(new { MovieId = 5, QualityProfileId = 42, Path = "/Movies/Movie (2020)", MovieFileId = 0 });
+                        earlier.Insert.IntoTable("VersionInfo").Row(new { Version = 244L, AppliedOn = DateTime.UtcNow, Description = "add_movie_versions" });
+                    }
+                }
+            }).GetDirectDataMapper();
+
+            var versions = db.Query<MovieVersion1000>("SELECT * FROM \"MovieVersions\" ORDER BY \"Id\"");
+
+            versions.Should().HaveCount(2);
+            versions[0].Name.Should().Be("Original");
+            versions[1].Name.Should().Be($"Version {versions[1].Id}");
+            versions.Should().OnlyContain(v => !v.Pinned && v.RequiredCustomFormatIds == "[]");
+
+            db.Query<VersionInfo1000>("SELECT \"Version\" FROM \"VersionInfo\" WHERE \"Version\" = 244").Should().BeEmpty();
+        }
     }
 
     public class Movie1000
@@ -103,5 +139,10 @@ namespace NzbDrone.Core.Test.Datastore.Migration
     {
         public int Id { get; set; }
         public int MovieVersionId { get; set; }
+    }
+
+    public class VersionInfo1000
+    {
+        public long Version { get; set; }
     }
 }

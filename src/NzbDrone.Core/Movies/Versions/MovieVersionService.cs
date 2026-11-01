@@ -381,18 +381,33 @@ namespace NzbDrone.Core.Movies.Versions
             var movieFile = message.MovieFile;
             var versions = _repository.FindByMovieId(movieFile.MovieId).OrderBy(v => v.Id).ToList();
             var primaryId = versions.FirstOrDefault()?.Id ?? 0;
+            var updated = new List<MovieVersion>();
+            var removed = new List<MovieVersion>();
 
-            // A pinned version only exists to hold its file, so deleting that file removes the version as well.
-            // Upgrades and re-imports replace the file and keep the version, a file missing from disk keeps it too.
-            var removed = message.Reason == DeleteMediaFileReason.Manual
-                ? versions.Where(v => v.Pinned && v.Id != primaryId && v.Id == movieFile.MovieVersionId).ToList()
-                : new List<MovieVersion>();
-
-            var updated = versions.Where(v => v.MovieFileId == movieFile.Id).Except(removed).ToList();
-
-            foreach (var version in updated)
+            // Only the versions whose current file this was
+            foreach (var version in versions.Where(v => v.MovieFileId == movieFile.Id))
             {
-                version.MovieFileId = 0;
+                // A pinned version only exists to hold its file, so deleting that file by hand removes the version as well,
+                // unless another file of the version is left. Upgrades and re-imports replace the file and keep the version,
+                // a file missing from disk keeps it too.
+                if (message.Reason == DeleteMediaFileReason.Manual && version.Pinned && version.Id != primaryId && version.Id == movieFile.MovieVersionId)
+                {
+                    var otherFiles = GetOtherFilesOfVersion(version, movieFile.Id);
+
+                    if (otherFiles.Empty())
+                    {
+                        removed.Add(version);
+                        continue;
+                    }
+
+                    version.MovieFileId = otherFiles.Max(f => f.Id);
+                }
+                else
+                {
+                    version.MovieFileId = 0;
+                }
+
+                updated.Add(version);
             }
 
             _repository.UpdateMany(updated);
@@ -412,6 +427,14 @@ namespace NzbDrone.Core.Movies.Versions
         private List<MovieVersion> GetAdditionalVersions(int movieId)
         {
             return _repository.FindByMovieId(movieId).OrderBy(v => v.Id).Skip(1).ToList();
+        }
+
+        // The files of the version other than the one being deleted, such as a file imported for it before its current one
+        private List<MovieFile> GetOtherFilesOfVersion(MovieVersion version, int deletedMovieFileId)
+        {
+            return (_mediaFileRepository.GetFilesByMovie(version.MovieId) ?? new List<MovieFile>())
+                .Where(f => f.MovieVersionId == version.Id && f.Id != deletedMovieFileId)
+                .ToList();
         }
 
         // Removes the version along with the releases waiting to be grabbed for it

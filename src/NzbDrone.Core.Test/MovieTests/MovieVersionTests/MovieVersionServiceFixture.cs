@@ -341,6 +341,50 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
                   .Verify(v => v.UpdateMany(It.Is<List<MovieVersion>>(l => l.Count == 0)), Times.Once());
         }
 
+        [Test]
+        public void should_keep_pinned_version_when_an_older_file_of_it_is_deleted()
+        {
+            var pinned = new MovieVersion { Id = 7, MovieId = _movie.Id, MovieFileId = 43, Pinned = true };
+            var olderFile = new MovieFile { Id = 42, MovieId = _movie.Id, MovieVersionId = 7 };
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion> { new MovieVersion { Id = 1, MovieId = _movie.Id, MovieFileId = 10 }, pinned });
+
+            Subject.Handle(new MovieFileDeletedEvent(olderFile, DeleteMediaFileReason.Manual));
+
+            pinned.MovieFileId.Should().Be(43);
+            Mocker.GetMock<IMovieVersionRepository>().Verify(v => v.Delete(It.IsAny<MovieVersion>()), Times.Never());
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.UpdateMany(It.Is<List<MovieVersion>>(l => l.Count == 0)), Times.Once());
+        }
+
+        [Test]
+        public void should_point_pinned_version_at_its_other_file_when_its_current_file_is_deleted()
+        {
+            var pinned = new MovieVersion { Id = 7, MovieId = _movie.Id, MovieFileId = 42, Pinned = true };
+            var currentFile = new MovieFile { Id = 42, MovieId = _movie.Id, MovieVersionId = 7 };
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Setup(s => s.FindByMovieId(_movie.Id))
+                  .Returns(new List<MovieVersion> { new MovieVersion { Id = 1, MovieId = _movie.Id, MovieFileId = 10 }, pinned });
+
+            // The record of the deleted file is already gone, an earlier file of the version is left
+            Mocker.GetMock<IMediaFileRepository>()
+                  .Setup(s => s.GetFilesByMovie(_movie.Id))
+                  .Returns(new List<MovieFile>
+                  {
+                      new MovieFile { Id = 10, MovieId = _movie.Id, MovieVersionId = 0 },
+                      new MovieFile { Id = 41, MovieId = _movie.Id, MovieVersionId = 7 }
+                  });
+
+            Subject.Handle(new MovieFileDeletedEvent(currentFile, DeleteMediaFileReason.Manual));
+
+            Mocker.GetMock<IMovieVersionRepository>().Verify(v => v.Delete(It.IsAny<MovieVersion>()), Times.Never());
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(v => v.UpdateMany(It.Is<List<MovieVersion>>(l => l.Count == 1 && l[0].Id == 7 && l[0].MovieFileId == 41)), Times.Once());
+        }
+
         [TestCase(DeleteMediaFileReason.Upgrade)]
         [TestCase(DeleteMediaFileReason.ManualOverride)]
         [TestCase(DeleteMediaFileReason.MissingFromDisk)]

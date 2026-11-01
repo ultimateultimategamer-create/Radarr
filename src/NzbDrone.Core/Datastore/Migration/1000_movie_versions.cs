@@ -12,6 +12,18 @@ namespace NzbDrone.Core.Datastore.Migration
                                                          WHERE ""Version"" IN (244, 245)
                                                          AND ""Description"" IN ('add_movie_versions', 'named_movie_versions')";
 
+        // The primary version is the oldest version of each movie
+        private const string NamePrimaryVersionsSql = @"UPDATE ""MovieVersions"" SET ""Name"" = 'Original'
+                                                        WHERE ""Id"" IN (SELECT MIN(""Id"") FROM ""MovieVersions"" GROUP BY ""MovieId"")";
+
+        // The other versions are named after their quality profile, as the earlier migration 245 did
+        private const string NameAdditionalVersionsSql = @"UPDATE ""MovieVersions""
+                                                           SET ""Name"" = COALESCE(
+                                                               (SELECT ""Name"" FROM ""QualityProfiles""
+                                                                WHERE ""QualityProfiles"".""Id"" = ""MovieVersions"".""QualityProfileId""),
+                                                               'Version ' || ""Id"")
+                                                           WHERE TRIM(COALESCE(""Name"", '')) = ''";
+
         protected override void MainDbUpgrade()
         {
             if (!Schema.Table("MovieVersions").Exists())
@@ -36,9 +48,12 @@ namespace NzbDrone.Core.Datastore.Migration
             }
 
             // Databases that ran this fork's earlier migrations (then numbered 244 and 245) already hold the versions.
+            // A database that only ran 244 has unnamed versions: name them as 245 would have.
             if (!Schema.Table("MovieVersions").Column("Name").Exists())
             {
                 Alter.Table("MovieVersions").AddColumn("Name").AsString(100).WithDefaultValue("");
+                Execute.Sql(NamePrimaryVersionsSql);
+                Execute.Sql(NameAdditionalVersionsSql);
             }
 
             if (!Schema.Table("MovieVersions").Column("RequiredCustomFormatIds").Exists())
