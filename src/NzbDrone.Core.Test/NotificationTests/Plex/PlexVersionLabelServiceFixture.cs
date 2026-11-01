@@ -309,6 +309,53 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
+        public void should_not_take_labels_off_movies_the_connection_does_not_apply_to()
+        {
+            Run();
+
+            _definition.Tags = new HashSet<int> { 1 };
+            _movie.Tags = new HashSet<int> { 2 };
+            _settings.LabelVersions = false;
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner (IMAX)");
+            _records.Should().ContainSingle();
+        }
+
+        [Test]
+        public void should_label_other_versions_when_plex_refuses_an_edit()
+        {
+            var openMatte = new MovieVersion { Id = 8, MovieId = 5, Name = "Open Matte", Pinned = true, Path = _movie.Path, MovieFileId = 12 };
+
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.GetAllAdditionalVersions())
+                  .Returns(new List<MovieVersion> { _version, openMatte });
+
+            Mocker.GetMock<IMediaFileService>()
+                  .Setup(s => s.GetFilesByMovies(It.IsAny<IEnumerable<int>>()))
+                  .Returns(new List<MovieFile>
+                  {
+                      new MovieFile { Id = 10, MovieId = 5, MovieVersionId = 0, RelativePath = "Blade Runner (1982) Bluray-1080p.mkv" },
+                      new MovieFile { Id = 11, MovieId = 5, MovieVersionId = 7, RelativePath = "Blade Runner (1982) {edition-IMAX}.mkv" },
+                      new MovieFile { Id = 12, MovieId = 5, MovieVersionId = 8, RelativePath = "Blade Runner (1982) {edition-Open Matte}.mkv" }
+                  });
+
+            var openMatteItem = GivenPlexMovie("102", "Blade Runner", "Open Matte", @"D:\Media\Movies\Blade Runner (1982)\Blade Runner (1982) {edition-Open Matte}.mkv");
+            _plexItems.Add(openMatteItem);
+
+            Mocker.GetMock<IPlexServerProxy>()
+                  .Setup(s => s.EditMovie(It.IsAny<int>(), "101", It.IsAny<Dictionary<string, string>>(), It.IsAny<PlexServerSettings>()))
+                  .Throws(new PlexException("Unable to connect to Plex Media Server. Status Code: BadRequest"));
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner");
+            openMatteItem.Title.Should().Be("Blade Runner (Open Matte)");
+            ExceptionVerification.ExpectedWarns(1);
+        }
+
+        [Test]
         public void should_take_a_label_off_through_its_item_when_plex_has_not_found_the_renamed_file()
         {
             Run();

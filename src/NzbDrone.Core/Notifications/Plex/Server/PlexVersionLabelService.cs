@@ -332,18 +332,23 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                 return;
             }
 
+            // Read before the edit: for a new label they're what the item had, kept to take the label off again
+            var titleLocked = item.IsLocked("title");
+            var editionTitle = item.EditionTitle;
+            var editionTitleLocked = item.IsLocked("editionTitle");
+
             // A label left from an earlier record, as after the connection was added again, isn't labeled twice
-            var originalTitle = record?.OriginalTitle ?? RemoveLabel(RemoveLabel(title, name), item.EditionTitle);
+            var originalTitle = record?.OriginalTitle ?? RemoveLabel(RemoveLabel(title, name), editionTitle);
             var labeledTitle = $"{originalTitle} ({name})";
             var fields = new Dictionary<string, string>();
 
-            if (title != labeledTitle || !item.IsLocked("title"))
+            if (title != labeledTitle || !titleLocked)
             {
                 fields.Add("title.value", labeledTitle);
                 fields.Add("title.locked", "1");
             }
 
-            if (item.EditionTitle != version.EditionName || !item.IsLocked("editionTitle"))
+            if (editionTitle != version.EditionName || !editionTitleLocked)
             {
                 fields.Add("editionTitle.value", version.EditionName);
                 fields.Add("editionTitle.locked", "1");
@@ -369,9 +374,9 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                     Title = labeledTitle,
                     EditionTitle = version.EditionName,
                     OriginalTitle = originalTitle,
-                    OriginalTitleLocked = item.IsLocked("title"),
-                    OriginalEditionTitle = item.EditionTitle,
-                    OriginalEditionTitleLocked = item.IsLocked("editionTitle"),
+                    OriginalTitleLocked = titleLocked,
+                    OriginalEditionTitle = editionTitle,
+                    OriginalEditionTitleLocked = editionTitleLocked,
                     LastChecked = now
                 });
             }
