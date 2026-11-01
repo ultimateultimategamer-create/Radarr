@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NzbDrone.Common.Disk;
@@ -51,10 +52,10 @@ namespace NzbDrone.Core.Movies.Versions
 
                 if (folderName.IsNotNullOrWhiteSpace() && versionName.IsNotNullOrWhiteSpace())
                 {
-                    var editionName = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition ? GetEditionName(movie) : string.Empty;
+                    var edition = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition ? GetEdition(movie) : string.Empty;
 
-                    fileName = editionName.IsNotNullOrWhiteSpace()
-                        ? $"{folderName} {{edition-{editionName}}}"
+                    fileName = edition.IsNotNullOrWhiteSpace()
+                        ? $"{folderName} {{edition-{edition}}}"
                         : $"{folderName} - {versionName}";
                 }
             }
@@ -112,11 +113,35 @@ namespace NzbDrone.Core.Movies.Versions
             return uniqueName;
         }
 
-        private string GetEditionName(Movie versionView)
+        // A version keeps the edition it was handed, unless another version or another version's file has it. A new one
+        // avoids those of the movie's other versions and files, so no two versions share an edition in Plex.
+        private string GetEdition(Movie versionView)
         {
-            var extraVersions = (_movieVersionService.GetByMovieId(versionView.Id) ?? Enumerable.Empty<MovieVersion>()).OrderBy(v => v.Id).Skip(1);
+            var version = versionView.Version;
+            var versions = _movieVersionService.GetByMovieId(versionView.Id) ?? new List<MovieVersion>();
+            var extraVersionIds = versions.OrderBy(v => v.Id).Skip(1).Select(v => v.Id).ToList();
+            var files = _mediaFileRepository.GetFilesByMovie(versionView.Id) ?? new List<MovieFile>();
 
-            return MovieVersionEditionName.Get(versionView.Version, extraVersions);
+            var taken = versions
+                .Where(v => v.Id != version.Id)
+                .Select(v => v.Edition)
+                .Concat(files.Where(f => f.GetVersionId(extraVersionIds) != version.Id).Select(f => MovieVersionEditionName.FromFileName(f.RelativePath)))
+                .Where(e => e.IsNotNullOrWhiteSpace())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (version.Edition.IsNotNullOrWhiteSpace() && !taken.Contains(version.Edition))
+            {
+                return version.Edition;
+            }
+
+            var edition = MovieVersionEditionName.Allocate(version.Name, taken);
+
+            if (edition.IsNotNullOrWhiteSpace() && version.Id > 0)
+            {
+                _movieVersionService.SetEdition(version, edition);
+            }
+
+            return edition;
         }
 
         private ExtraVersionNaming GetExtraVersionNaming()

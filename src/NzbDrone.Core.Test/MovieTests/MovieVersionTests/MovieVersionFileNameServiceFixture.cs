@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using FluentAssertions;
+using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
@@ -113,9 +114,29 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
                   .Returns(new NamingConfig { ExtraVersionNaming = naming });
         }
 
-        private Movie GivenVersionView(string name)
+        private Movie GivenVersionView(string name, string edition = null)
         {
-            return _movie.ForVersion(new MovieVersion { Id = 7, MovieId = 5, Name = name, QualityProfileId = 1, Path = _movie.Path, Pinned = true });
+            return _movie.ForVersion(new MovieVersion { Id = 7, MovieId = 5, Name = name, QualityProfileId = 1, Path = _movie.Path, Pinned = true, Edition = edition });
+        }
+
+        private void GivenAnotherVersion(string edition, string relativePath)
+        {
+            Mocker.GetMock<IMovieVersionService>()
+                  .Setup(s => s.GetByMovieId(5))
+                  .Returns(new List<MovieVersion>
+                  {
+                      new MovieVersion { Id = 3, MovieId = 5, QualityProfileId = 1 },
+                      new MovieVersion { Id = 7, MovieId = 5, QualityProfileId = 2 },
+                      new MovieVersion { Id = 9, MovieId = 5, QualityProfileId = 2, Edition = edition }
+                  });
+
+            Mocker.GetMock<IMediaFileRepository>()
+                  .Setup(s => s.GetFilesByMovie(5))
+                  .Returns(new List<MovieFile>
+                  {
+                      _primaryFile,
+                      new MovieFile { Id = 12, MovieId = 5, MovieVersionId = 9, RelativePath = relativePath }
+                  });
         }
 
         [Test]
@@ -146,6 +167,55 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
             GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
 
             Subject.GetFileName(GivenVersionView("Director's Cut Extended Unrated Special"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-Director's Cut Extended Unrated}");
+        }
+
+        [Test]
+        public void should_keep_the_edition_a_version_was_handed()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+
+            Subject.GetFileName(GivenVersionView("IMAX", "IMAX 2"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX 2}");
+
+            Mocker.GetMock<IMovieVersionService>()
+                  .Verify(s => s.SetEdition(It.IsAny<MovieVersion>(), It.IsAny<string>()), Times.Never());
+        }
+
+        [Test]
+        public void should_save_the_edition_a_version_is_handed()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+
+            Subject.GetFileName(GivenVersionView("IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p");
+
+            Mocker.GetMock<IMovieVersionService>()
+                  .Verify(s => s.SetEdition(It.Is<MovieVersion>(v => v.Id == 7), "IMAX"), Times.Once());
+        }
+
+        [Test]
+        public void should_not_hand_out_an_edition_a_file_of_another_version_has()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+            GivenAnotherVersion(null, "Movie (2020) {edition-IMAX}.mkv");
+
+            Subject.GetFileName(GivenVersionView("IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX 2}");
+        }
+
+        [Test]
+        public void should_not_hand_out_an_edition_another_version_was_handed()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+            GivenAnotherVersion("IMAX", "Movie (2020) - Old.mkv");
+
+            Subject.GetFileName(GivenVersionView("IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX 2}");
+        }
+
+        [Test]
+        public void should_hand_out_a_new_edition_when_another_version_has_the_one_kept()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+            GivenAnotherVersion(null, "Movie (2020) {edition-IMAX}.mkv");
+
+            Subject.GetFileName(GivenVersionView("IMAX", "IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX 2}");
         }
 
         [Test]

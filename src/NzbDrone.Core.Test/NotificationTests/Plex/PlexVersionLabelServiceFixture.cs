@@ -17,47 +17,42 @@ using NzbDrone.Test.Common;
 
 namespace NzbDrone.Core.Test.NotificationTests.Plex
 {
-    // Plex and the label records are faked in memory, so each test checks what ends up in Plex
+    // Plex servers and the label records are faked in memory, so each test checks what ends up in Plex
     [TestFixture]
     public class PlexVersionLabelServiceFixture : CoreTest<PlexVersionLabelService>
     {
         private const string PlexGuid = "plex://movie/5d776826151a60001f24a6b6";
-        private const string OriginalFile = @"D:\Media\Movies\Blade Runner (1982)\Blade Runner (1982) Bluray-1080p.mkv";
-        private const string EditionFile = @"D:\Media\Movies\Blade Runner (1982)\Blade Runner (1982) {edition-IMAX}.mkv";
-        private const string UntrackedFile = @"D:\Media\Movies\Blade Runner (1982)\Blade Runner (1982) Theatrical.mkv";
+        private const string Folder = @"D:\Media\Movies\Blade Runner (1982)\";
+        private const string OriginalFile = Folder + "Blade Runner (1982) Bluray-1080p.mkv";
+        private const string EditionFile = Folder + "Blade Runner (1982) {edition-IMAX}.mkv";
+        private const string UntrackedFile = Folder + "Blade Runner (1982) Theatrical.mkv";
 
         private PlexServerSettings _settings;
         private NotificationDefinition _definition;
+        private List<INotification> _connections;
         private Movie _movie;
         private MovieVersion _version;
+        private List<MovieVersion> _versions;
+        private List<MovieFile> _files;
         private PlexMovie _original;
         private PlexMovie _edition;
         private List<PlexMovie> _plexItems;
+        private Dictionary<string, int> _itemSections;
+        private List<PlexSection> _sections;
+        private string _serverId;
         private List<PlexVersionLabel> _records;
+        private bool _failNextUpdate;
 
         [SetUp]
         public void Setup()
         {
-            _settings = new PlexServerSettings
-            {
-                Host = "127.0.0.1",
-                Port = 32400,
-                LabelVersions = true
-            };
-
-            _definition = new NotificationDefinition
-            {
-                Id = 3,
-                Name = "Plex",
-                Settings = _settings
-            };
-
-            var notification = new Mock<INotification>();
-            notification.SetupGet(n => n.Definition).Returns(_definition);
+            _settings = new PlexServerSettings { Host = "127.0.0.1", Port = 32400, LabelVersions = true };
+            _definition = new NotificationDefinition { Id = 3, Name = "Plex", Settings = _settings };
+            _connections = new List<INotification> { GivenConnection(_definition) };
 
             Mocker.GetMock<INotificationFactory>()
                   .Setup(s => s.GetAvailableProviders())
-                  .Returns(new List<INotification> { notification.Object });
+                  .Returns(() => _connections.ToList());
 
             _movie = new Movie
             {
@@ -67,10 +62,17 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             };
 
             _version = new MovieVersion { Id = 7, MovieId = 5, Name = "IMAX", Pinned = true, Path = _movie.Path, MovieFileId = 11 };
+            _versions = new List<MovieVersion> { _version };
+
+            _files = new List<MovieFile>
+            {
+                new MovieFile { Id = 10, MovieId = 5, MovieVersionId = 0, RelativePath = "Blade Runner (1982) Bluray-1080p.mkv" },
+                new MovieFile { Id = 11, MovieId = 5, MovieVersionId = 7, RelativePath = "Blade Runner (1982) {edition-IMAX}.mkv" }
+            };
 
             Mocker.GetMock<IMovieVersionService>()
                   .Setup(s => s.GetAllAdditionalVersions())
-                  .Returns(() => new List<MovieVersion> { _version });
+                  .Returns(() => _versions.ToList());
 
             Mocker.GetMock<IMovieService>()
                   .Setup(s => s.GetMovies(It.IsAny<IEnumerable<int>>()))
@@ -78,23 +80,25 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             Mocker.GetMock<IMediaFileService>()
                   .Setup(s => s.GetFilesByMovies(It.IsAny<IEnumerable<int>>()))
-                  .Returns(new List<MovieFile>
-                  {
-                      new MovieFile { Id = 10, MovieId = 5, MovieVersionId = 0, RelativePath = "Blade Runner (1982) Bluray-1080p.mkv" },
-                      new MovieFile { Id = 11, MovieId = 5, MovieVersionId = 7, RelativePath = "Blade Runner (1982) {edition-IMAX}.mkv" }
-                  });
+                  .Returns(() => _files.ToList());
 
             _original = GivenPlexMovie("100", "Blade Runner", null, OriginalFile);
             _edition = GivenPlexMovie("101", "Blade Runner", "IMAX", EditionFile);
             _plexItems = new List<PlexMovie> { _original, _edition };
+            _itemSections = new Dictionary<string, int>();
+            _sections = new List<PlexSection> { new PlexSection { Id = 1, Type = "movie" } };
+            _serverId = "server-a";
 
             var proxy = Mocker.GetMock<IPlexServerProxy>();
 
+            proxy.Setup(s => s.GetMachineIdentifier(It.IsAny<PlexServerSettings>()))
+                 .Returns(() => _serverId);
+
             proxy.Setup(s => s.GetMovieSections(It.IsAny<PlexServerSettings>()))
-                 .Returns(new List<PlexSection> { new PlexSection { Id = 1, Type = "movie" } });
+                 .Returns(() => _sections.ToList());
 
             proxy.Setup(s => s.GetMovies(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<PlexServerSettings>()))
-                 .Returns(() => _plexItems.ToList());
+                 .Returns<int, string, int, PlexServerSettings>((sectionId, title, year, settings) => _plexItems.Where(i => SectionOf(i) == sectionId).ToList());
 
             GivenPlexReachable();
 
@@ -105,29 +109,73 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             var repository = Mocker.GetMock<IPlexVersionLabelRepository>();
 
+            // Stored as copies, as a database would: a change only counts once it's saved
             repository.Setup(s => s.All())
-                      .Returns(() => _records.ToList());
+                      .Returns(() => _records.Select(Copy).ToList());
 
             repository.Setup(s => s.Insert(It.IsAny<PlexVersionLabel>()))
                       .Returns<PlexVersionLabel>(r =>
                       {
                           r.Id = _records.Select(x => x.Id).DefaultIfEmpty(0).Max() + 1;
-                          _records.Add(r);
+                          _records.Add(Copy(r));
 
                           return r;
                       });
 
             repository.Setup(s => s.Update(It.IsAny<PlexVersionLabel>()))
-                      .Returns<PlexVersionLabel>(r => r);
+                      .Returns<PlexVersionLabel>(r =>
+                      {
+                          if (_failNextUpdate)
+                          {
+                              _failNextUpdate = false;
+
+                              throw new InvalidOperationException("database is locked");
+                          }
+
+                          var index = _records.FindIndex(x => x.Id == r.Id);
+
+                          if (index >= 0)
+                          {
+                              _records[index] = Copy(r);
+                          }
+
+                          return r;
+                      });
 
             repository.Setup(s => s.Delete(It.IsAny<int>()))
                       .Callback<int>(id => _records.RemoveAll(r => r.Id == id));
-
-            repository.Setup(s => s.DeleteMany(It.IsAny<IEnumerable<int>>()))
-                      .Callback<IEnumerable<int>>(ids => _records.RemoveAll(r => ids.Contains(r.Id)));
         }
 
-        private static PlexMovie GivenPlexMovie(string ratingKey, string title, string edition, string file)
+        private static PlexVersionLabel Copy(PlexVersionLabel record)
+        {
+            return new PlexVersionLabel
+            {
+                Id = record.Id,
+                ServerId = record.ServerId,
+                RatingKey = record.RatingKey,
+                SectionId = record.SectionId,
+                MovieId = record.MovieId,
+                MovieVersionId = record.MovieVersionId,
+                MovieFileId = record.MovieFileId,
+                FilePath = record.FilePath,
+                Name = record.Name,
+                Title = record.Title,
+                PendingTitle = record.PendingTitle,
+                OriginalTitle = record.OriginalTitle,
+                OriginalTitleLocked = record.OriginalTitleLocked,
+                LastChecked = record.LastChecked
+            };
+        }
+
+        private static INotification GivenConnection(NotificationDefinition definition)
+        {
+            var notification = new Mock<INotification>();
+            notification.SetupGet(n => n.Definition).Returns(definition);
+
+            return notification.Object;
+        }
+
+        private static PlexMovie GivenPlexMovie(string ratingKey, string title, string edition, params string[] files)
         {
             var movie = new PlexMovie
             {
@@ -138,7 +186,10 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
                 Year = 1982
             };
 
-            AddFile(movie, file);
+            foreach (var file in files)
+            {
+                AddFile(movie, file);
+            }
 
             return movie;
         }
@@ -171,6 +222,11 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             }
         }
 
+        private int SectionOf(PlexMovie item)
+        {
+            return _itemSections.TryGetValue(item.RatingKey, out var sectionId) ? sectionId : 1;
+        }
+
         private void GivenPlexReachable()
         {
             Mocker.GetMock<IPlexServerProxy>()
@@ -185,6 +241,14 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
                   .Throws(new PlexException("Unable to connect to Plex Media Server"));
         }
 
+        // Plex answers for the item without its files
+        private void GivenPlexLeavesOutFiles(string ratingKey)
+        {
+            Mocker.GetMock<IPlexServerProxy>()
+                  .Setup(s => s.GetMovie(ratingKey, It.IsAny<PlexServerSettings>()))
+                  .Returns(() => new PlexMovie { RatingKey = ratingKey, Guid = PlexGuid, Title = _edition.Title, EditionTitle = _edition.EditionTitle });
+        }
+
         private void GivenExtraVersionNaming(ExtraVersionNaming naming)
         {
             Mocker.GetMock<INamingConfigService>()
@@ -195,6 +259,12 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         private void GivenLabelsCheckedLongAgo()
         {
             _records.ForEach(r => r.LastChecked = DateTime.UtcNow.AddDays(-2));
+        }
+
+        private void GivenSecondVersion()
+        {
+            _versions.Add(new MovieVersion { Id = 8, MovieId = 5, Name = "Open Matte", Pinned = true, Path = _movie.Path, MovieFileId = 12 });
+            _files.Add(new MovieFile { Id = 12, MovieId = 5, MovieVersionId = 8, RelativePath = "Blade Runner (1982) {edition-Open Matte}.mkv" });
         }
 
         private void VerifyNotEdited()
@@ -226,14 +296,23 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             Run();
 
             _edition.Title.Should().Be("Blade Runner (IMAX)");
-            _edition.EditionTitle.Should().Be("IMAX");
             _edition.IsLocked("title").Should().BeTrue();
-            _edition.IsLocked("editionTitle").Should().BeTrue();
 
             _records.Should().ContainSingle();
+            _records[0].ServerId.Should().Be("server-a");
             _records[0].RatingKey.Should().Be("101");
             _records[0].OriginalTitle.Should().Be("Blade Runner");
-            _records[0].OriginalTitleLocked.Should().BeFalse();
+            _records[0].Title.Should().Be("Blade Runner (IMAX)");
+            _records[0].PendingTitle.Should().BeNull();
+        }
+
+        [Test]
+        public void should_leave_the_edition_to_the_file_name()
+        {
+            Run();
+
+            _edition.EditionTitle.Should().Be("IMAX");
+            _edition.IsLocked("editionTitle").Should().BeFalse();
         }
 
         [Test]
@@ -267,6 +346,41 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             VerifyNotEdited();
             ExceptionVerification.ExpectedWarns(1);
+        }
+
+        [Test]
+        public void should_not_edit_an_item_plex_lists_without_its_files()
+        {
+            GivenPlexLeavesOutFiles("101");
+
+            Run();
+
+            VerifyNotEdited();
+            _records.Should().BeEmpty();
+        }
+
+        [Test]
+        public void should_keep_a_label_recorded_while_plex_leaves_out_the_files()
+        {
+            Run();
+
+            GivenPlexLeavesOutFiles("101");
+            _settings.LabelVersions = false;
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner (IMAX)");
+            _records.Should().ContainSingle();
+        }
+
+        [Test]
+        public void should_not_label_an_item_whose_edition_is_not_the_files()
+        {
+            _edition.EditionTitle = "Director's Cut";
+
+            Run();
+
+            VerifyNotEdited();
         }
 
         [Test]
@@ -324,35 +438,123 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
-        public void should_label_other_versions_when_plex_refuses_an_edit()
+        public void should_not_touch_another_server_a_connection_is_changed_to()
         {
-            var openMatte = new MovieVersion { Id = 8, MovieId = 5, Name = "Open Matte", Pinned = true, Path = _movie.Path, MovieFileId = 12 };
+            Run();
 
-            Mocker.GetMock<IMovieVersionService>()
-                  .Setup(s => s.GetAllAdditionalVersions())
-                  .Returns(new List<MovieVersion> { _version, openMatte });
+            // The connection now reaches another server, which has an unrelated movie under the same rating key
+            var unrelated = GivenPlexMovie("101", "Another Movie", "IMAX", @"E:\Films\Another Movie (2001)\Another Movie (2001) {edition-IMAX}.mkv");
+            _plexItems = new List<PlexMovie> { unrelated };
+            _serverId = "server-b";
+            _settings.LabelVersions = false;
+            Subject.Handle(new ProviderUpdatedEvent<INotification>(_definition));
 
-            Mocker.GetMock<IMediaFileService>()
-                  .Setup(s => s.GetFilesByMovies(It.IsAny<IEnumerable<int>>()))
-                  .Returns(new List<MovieFile>
-                  {
-                      new MovieFile { Id = 10, MovieId = 5, MovieVersionId = 0, RelativePath = "Blade Runner (1982) Bluray-1080p.mkv" },
-                      new MovieFile { Id = 11, MovieId = 5, MovieVersionId = 7, RelativePath = "Blade Runner (1982) {edition-IMAX}.mkv" },
-                      new MovieFile { Id = 12, MovieId = 5, MovieVersionId = 8, RelativePath = "Blade Runner (1982) {edition-Open Matte}.mkv" }
-                  });
+            Run();
 
-            var openMatteItem = GivenPlexMovie("102", "Blade Runner", "Open Matte", @"D:\Media\Movies\Blade Runner (1982)\Blade Runner (1982) {edition-Open Matte}.mkv");
-            _plexItems.Add(openMatteItem);
+            unrelated.Title.Should().Be("Another Movie");
+            unrelated.EditionTitle.Should().Be("IMAX");
+            VerifyItemReads(1);
+            _records.Should().ContainSingle(r => r.ServerId == "server-a");
+        }
 
-            Mocker.GetMock<IPlexServerProxy>()
-                  .Setup(s => s.EditMovie(It.IsAny<int>(), "101", It.IsAny<Dictionary<string, string>>(), It.IsAny<PlexServerSettings>()))
-                  .Throws(new PlexException("Unable to connect to Plex Media Server. Status Code: BadRequest"));
+        [Test]
+        public void should_keep_labels_another_connection_to_the_same_server_still_adds()
+        {
+            var otherSettings = new PlexServerSettings { Host = "plex.local", Port = 32400, LabelVersions = true };
+            _connections.Add(GivenConnection(new NotificationDefinition { Id = 4, Name = "Plex too", Settings = otherSettings }));
+
+            Run();
+
+            _records.Should().ContainSingle();
+
+            _settings.LabelVersions = false;
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner (IMAX)");
+            _records.Should().ContainSingle();
+        }
+
+        [Test]
+        public void should_not_edit_plex_when_the_label_cannot_be_recorded()
+        {
+            Mocker.GetMock<IPlexVersionLabelRepository>()
+                  .Setup(s => s.Insert(It.IsAny<PlexVersionLabel>()))
+                  .Throws(new InvalidOperationException("database is locked"));
+
+            Run();
+
+            VerifyNotEdited();
+            _edition.Title.Should().Be("Blade Runner");
+            ExceptionVerification.ExpectedWarns(1);
+        }
+
+        [Test]
+        public void should_restore_the_exact_title_when_recording_failed_after_the_edit()
+        {
+            _failNextUpdate = true;
+
+            Run();
+
+            ExceptionVerification.ExpectedWarns(1);
+            _records.Should().ContainSingle();
+            _records[0].PendingTitle.Should().Be("Blade Runner (IMAX)");
+
+            Run();
+
+            _records[0].Title.Should().Be("Blade Runner (IMAX)");
+            _records[0].OriginalTitle.Should().Be("Blade Runner");
+
+            _settings.LabelVersions = false;
 
             Run();
 
             _edition.Title.Should().Be("Blade Runner");
-            openMatteItem.Title.Should().Be("Blade Runner (Open Matte)");
+            _edition.IsLocked("title").Should().BeFalse();
+            _records.Should().BeEmpty();
+        }
+
+        [Test]
+        public void should_label_once_plex_takes_an_edit_that_failed()
+        {
+            Mocker.GetMock<IPlexServerProxy>()
+                  .Setup(s => s.EditMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<Dictionary<string, string>>(), It.IsAny<PlexServerSettings>()))
+                  .Throws(new PlexException("Unable to connect to Plex Media Server. Status Code: BadRequest"));
+
+            Run();
+
             ExceptionVerification.ExpectedWarns(1);
+            _records.Should().ContainSingle();
+            _records[0].Title.Should().BeNull();
+
+            Mocker.GetMock<IPlexServerProxy>()
+                  .Setup(s => s.EditMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<Dictionary<string, string>>(), It.IsAny<PlexServerSettings>()))
+                  .Callback<int, string, Dictionary<string, string>, PlexServerSettings>((sectionId, ratingKey, fields, settings) => Apply(_plexItems.Single(i => i.RatingKey == ratingKey), fields));
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner (IMAX)");
+            _records[0].Title.Should().Be("Blade Runner (IMAX)");
+        }
+
+        [Test]
+        public void should_leave_a_title_that_already_shows_the_name_on_and_off()
+        {
+            _edition.Title = "Blade Runner (IMAX)";
+
+            Run();
+
+            VerifyNotEdited();
+            _records.Should().ContainSingle();
+            _records[0].OriginalTitle.Should().Be("Blade Runner (IMAX)");
+
+            _settings.LabelVersions = false;
+
+            Run();
+
+            VerifyNotEdited();
+            _edition.Title.Should().Be("Blade Runner (IMAX)");
+            _records.Should().BeEmpty();
         }
 
         [Test]
@@ -362,10 +564,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             // Renamed for label naming, and Plex hasn't scanned the new name yet
             GivenExtraVersionNaming(ExtraVersionNaming.Label);
-
-            Mocker.GetMock<IPlexServerProxy>()
-                  .Setup(s => s.GetMovies(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<PlexServerSettings>()))
-                  .Returns(new List<PlexMovie>());
+            _files[1].RelativePath = "Blade Runner (1982) - IMAX.mkv";
 
             Run();
 
@@ -424,7 +623,6 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             Run();
 
             _edition.Title.Should().Be("Blade Runner (IMAX Enhanced)");
-            _edition.EditionTitle.Should().Be("IMAX Enhanced");
             _records.Should().ContainSingle();
             _records[0].OriginalTitle.Should().Be("Blade Runner");
         }
@@ -443,6 +641,26 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
+        public void should_not_look_again_at_a_title_changed_outside_radarr_after_a_rename()
+        {
+            Run();
+
+            _edition.Title = "Blade Runner: The IMAX Cut";
+            _version.Name = "Open Matte";
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner: The IMAX Cut");
+
+            Mocker.GetMock<IPlexServerProxy>().Invocations.Clear();
+
+            Run();
+
+            VerifySearches(0);
+            VerifyItemReads(0);
+        }
+
+        [Test]
         public void should_not_take_off_a_title_changed_outside_radarr()
         {
             Run();
@@ -453,7 +671,6 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             Run();
 
             _edition.Title.Should().Be("Blade Runner: The IMAX Cut");
-            _edition.IsLocked("editionTitle").Should().BeFalse();
             _records.Should().BeEmpty();
         }
 
@@ -467,9 +684,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             Run();
 
             _edition.Title.Should().Be("Blade Runner");
-            _edition.EditionTitle.Should().Be("IMAX");
             _edition.IsLocked("title").Should().BeFalse();
-            _edition.IsLocked("editionTitle").Should().BeFalse();
             _records.Should().BeEmpty();
         }
 
@@ -481,11 +696,43 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             Run();
 
             Mocker.GetMock<IPlexServerProxy>()
-                  .Verify(v => v.GetMovieSections(It.IsAny<PlexServerSettings>()), Times.Never());
+                  .Verify(v => v.GetMachineIdentifier(It.IsAny<PlexServerSettings>()), Times.Never());
 
             VerifySearches(0);
             VerifyItemReads(0);
             VerifyNotEdited();
+        }
+
+        [Test]
+        public void should_label_the_version_in_every_library_holding_its_file()
+        {
+            var otherLibrary = GivenPlexMovie("201", "Blade Runner", "IMAX", EditionFile);
+            _plexItems.Add(otherLibrary);
+            _itemSections["201"] = 2;
+            _sections.Add(new PlexSection { Id = 2, Type = "movie" });
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner (IMAX)");
+            otherLibrary.Title.Should().Be("Blade Runner (IMAX)");
+            _records.Should().HaveCount(2);
+        }
+
+        [Test]
+        public void should_label_the_new_item_of_a_renamed_file_on_the_next_run()
+        {
+            Run();
+
+            // Renamed with the same file id, and Plex added the new name as a new item
+            _files[1].RelativePath = "Blade Runner (1982) {edition-IMAX} [Remux].mkv";
+            var renamed = GivenPlexMovie("301", "Blade Runner", "IMAX", Folder + "Blade Runner (1982) {edition-IMAX} [Remux].mkv");
+            _plexItems.Remove(_edition);
+            _plexItems.Add(renamed);
+
+            Run();
+
+            renamed.Title.Should().Be("Blade Runner (IMAX)");
+            _records.Should().ContainSingle(r => r.RatingKey == "301");
         }
 
         [Test]
@@ -528,9 +775,8 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             Run();
 
-            // The labeled item is read again, no search is needed
             VerifyItemReads(2);
-            VerifySearches(1);
+            VerifySearches(2);
         }
 
         [Test]
@@ -546,27 +792,13 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
-        public void should_not_label_an_item_twice()
-        {
-            // Labeled before, as by a connection that was deleted and added again
-            _edition.Title = "Blade Runner (IMAX)";
-
-            Run();
-
-            _edition.Title.Should().Be("Blade Runner (IMAX)");
-            _records.Should().ContainSingle();
-            _records[0].OriginalTitle.Should().Be("Blade Runner");
-        }
-
-        [Test]
-        public void should_cut_the_edition_to_plex_limit_and_keep_the_full_name_in_the_title()
+        public void should_keep_the_full_version_name_in_the_title()
         {
             _version.Name = "Director's Cut Extended Unrated Special";
 
             Run();
 
             _edition.Title.Should().Be("Blade Runner (Director's Cut Extended Unrated Special)");
-            _edition.EditionTitle.Should().Be("Director's Cut Extended Unrated");
         }
 
         [Test]
@@ -574,9 +806,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         {
             Run();
 
-            Mocker.GetMock<IMovieVersionService>()
-                  .Setup(s => s.GetAllAdditionalVersions())
-                  .Returns(new List<MovieVersion>());
+            _versions.Clear();
 
             Run();
 
@@ -585,13 +815,21 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
-        public void should_forget_labels_of_a_deleted_connection()
+        public void should_label_other_versions_when_plex_refuses_an_edit()
         {
+            GivenSecondVersion();
+            var openMatte = GivenPlexMovie("102", "Blade Runner", "Open Matte", Folder + "Blade Runner (1982) {edition-Open Matte}.mkv");
+            _plexItems.Add(openMatte);
+
+            Mocker.GetMock<IPlexServerProxy>()
+                  .Setup(s => s.EditMovie(It.IsAny<int>(), "101", It.IsAny<Dictionary<string, string>>(), It.IsAny<PlexServerSettings>()))
+                  .Throws(new PlexException("Unable to connect to Plex Media Server. Status Code: BadRequest"));
+
             Run();
 
-            Subject.Handle(new ProviderDeletedEvent<INotification>(_definition.Id));
-
-            _records.Should().BeEmpty();
+            _edition.Title.Should().Be("Blade Runner");
+            openMatte.Title.Should().Be("Blade Runner (Open Matte)");
+            ExceptionVerification.ExpectedWarns(1);
         }
 
         [Test]
@@ -612,9 +850,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         [Test]
         public void should_not_look_in_plex_without_extra_versions()
         {
-            Mocker.GetMock<IMovieVersionService>()
-                  .Setup(s => s.GetAllAdditionalVersions())
-                  .Returns(new List<MovieVersion>());
+            _versions.Clear();
 
             Run();
 

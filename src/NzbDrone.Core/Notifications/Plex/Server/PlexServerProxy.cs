@@ -15,6 +15,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
     {
         List<PlexSection> GetMovieSections(PlexServerSettings settings);
         string Version(PlexServerSettings settings);
+        string GetMachineIdentifier(PlexServerSettings settings);
         void Update(int sectionId, string path, PlexServerSettings settings);
         List<PlexMovie> GetMovies(int sectionId, string title, int year, PlexServerSettings settings);
         PlexMovie GetMovie(string ratingKey, PlexServerSettings settings);
@@ -152,6 +153,22 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             return Json.Deserialize<PlexResponse<PlexIdentity>>(response)
                        .MediaContainer
                        .Version;
+        }
+
+        // Which Plex server the connection reaches, for as long as it runs
+        public string GetMachineIdentifier(PlexServerSettings settings)
+        {
+            var request = BuildRequest("identity", HttpMethod.Get, settings);
+            var response = ProcessRequest(request);
+
+            CheckForError(response);
+
+            if (response.Contains("_children"))
+            {
+                return Json.Deserialize<PlexIdentity>(response).MachineIdentifier;
+            }
+
+            return Json.Deserialize<PlexResponse<PlexIdentity>>(response).MediaContainer?.MachineIdentifier;
         }
 
         private HttpRequestBuilder BuildRequest(string resource, HttpMethod method, PlexServerSettings settings)

@@ -34,6 +34,7 @@ namespace NzbDrone.Core.Movies.Versions
         MovieVersion AddVersion(Movie movie, int qualityProfileId, string name = null, List<int> requiredCustomFormatIds = null);
         MovieVersion AddPinnedVersion(Movie movie, string name, string suggestedName = null);
         MovieVersion UpdateVersion(int id, string name, int qualityProfileId, List<int> requiredCustomFormatIds);
+        void SetEdition(MovieVersion version, string edition);
         void RemoveVersion(int id);
         MovieVersion Update(MovieVersion version);
         void Delete(int id);
@@ -250,11 +251,23 @@ namespace NzbDrone.Core.Movies.Versions
             name = name?.Trim();
             ValidateVersion(_repository.FindByMovieId(version.MovieId), id, name, qualityProfileId, requiredCustomFormatIds);
 
+            // A renamed version is handed a new edition the next time its files are named
+            if (!string.Equals(version.Name, name, StringComparison.Ordinal))
+            {
+                version.Edition = null;
+            }
+
             version.Name = name;
             version.QualityProfileId = qualityProfileId;
             version.RequiredCustomFormatIds = requiredCustomFormatIds?.Distinct().ToList() ?? new List<int>();
 
             return _repository.Update(version);
+        }
+
+        public void SetEdition(MovieVersion version, string edition)
+        {
+            version.Edition = edition;
+            _repository.SetFields(version, v => v.Edition);
         }
 
         private void ValidateVersion(List<MovieVersion> existing, int id, string name, int qualityProfileId, List<int> requiredCustomFormatIds)

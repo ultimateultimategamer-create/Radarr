@@ -10,37 +10,35 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
     public class PlexVersionLabelRepositoryFixture : DbTest<PlexVersionLabelRepository, PlexVersionLabel>
     {
         [Test]
-        public void should_store_a_label_with_what_the_item_had_before()
+        public void should_store_a_label_with_the_title_from_before()
         {
             var lastChecked = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
 
             Subject.Insert(new PlexVersionLabel
             {
-                NotificationId = 3,
+                ServerId = "5d776826151a60001f24a6b6",
+                RatingKey = "101",
+                SectionId = 1,
                 MovieId = 5,
                 MovieVersionId = 7,
                 MovieFileId = 11,
+                FilePath = "Blade Runner (1982)/Blade Runner (1982) {edition-IMAX}.mkv",
                 Name = "IMAX",
-                SectionId = 1,
-                RatingKey = "101",
-                Title = "Blade Runner (IMAX)",
-                EditionTitle = "IMAX",
+                PendingTitle = "Blade Runner (IMAX)",
                 OriginalTitle = "Blade Runner",
-                OriginalTitleLocked = false,
-                OriginalEditionTitle = "IMAX",
-                OriginalEditionTitleLocked = true,
+                OriginalTitleLocked = true,
                 LastChecked = lastChecked
             });
 
             var label = StoredModel;
 
-            label.NotificationId.Should().Be(3);
-            label.MovieVersionId.Should().Be(7);
+            label.ServerId.Should().Be("5d776826151a60001f24a6b6");
             label.RatingKey.Should().Be("101");
-            label.Title.Should().Be("Blade Runner (IMAX)");
+            label.FilePath.Should().Be("Blade Runner (1982)/Blade Runner (1982) {edition-IMAX}.mkv");
+            label.Title.Should().BeNull();
+            label.PendingTitle.Should().Be("Blade Runner (IMAX)");
             label.OriginalTitle.Should().Be("Blade Runner");
-            label.OriginalTitleLocked.Should().BeFalse();
-            label.OriginalEditionTitleLocked.Should().BeTrue();
+            label.OriginalTitleLocked.Should().BeTrue();
             label.LastChecked.ToUniversalTime().Should().Be(lastChecked);
         }
     }

@@ -17,6 +17,10 @@ namespace NzbDrone.Core.Movies.Versions
         public string Path { get; set; }
         public int MovieFileId { get; set; }
 
+        // The edition the version's files are named with for Plex, kept once handed out so it doesn't change as other
+        // versions come and go. Cleared when the version is renamed.
+        public string Edition { get; set; }
+
         public bool HasFile => MovieFileId > 0;
 
         public override string ToString()

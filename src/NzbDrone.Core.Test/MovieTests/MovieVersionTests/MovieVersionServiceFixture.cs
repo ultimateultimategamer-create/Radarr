@@ -501,6 +501,36 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_hand_a_renamed_version_a_new_edition()
+        {
+            var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original", QualityProfileId = 3 };
+            var additional = new MovieVersion { Id = 7, MovieId = _movie.Id, Name = "IMAX", QualityProfileId = 3, Edition = "IMAX" };
+            GivenQualityProfile(3);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.Get(7)).Returns(additional);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion> { primary, additional });
+
+            Subject.UpdateVersion(7, "Open Matte", 3, null);
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(s => s.Update(It.Is<MovieVersion>(v => v.Id == 7 && v.Name == "Open Matte" && v.Edition == null)), Times.Once());
+        }
+
+        [Test]
+        public void should_keep_the_edition_of_a_version_that_keeps_its_name()
+        {
+            var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original", QualityProfileId = 3 };
+            var additional = new MovieVersion { Id = 7, MovieId = _movie.Id, Name = "IMAX", QualityProfileId = 3, Edition = "IMAX" };
+            GivenQualityProfile(4);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.Get(7)).Returns(additional);
+            Mocker.GetMock<IMovieVersionRepository>().Setup(s => s.FindByMovieId(_movie.Id)).Returns(new List<MovieVersion> { primary, additional });
+
+            Subject.UpdateVersion(7, "IMAX", 4, null);
+
+            Mocker.GetMock<IMovieVersionRepository>()
+                  .Verify(s => s.Update(It.Is<MovieVersion>(v => v.Id == 7 && v.Edition == "IMAX")), Times.Once());
+        }
+
+        [Test]
         public void should_save_primary_version_settings_without_loading_the_movie_service()
         {
             var primary = new MovieVersion { Id = 1, MovieId = _movie.Id, Name = "Original", QualityProfileId = 3 };
