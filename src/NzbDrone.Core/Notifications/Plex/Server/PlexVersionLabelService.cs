@@ -211,28 +211,30 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                 .Where(v => AppliesTo(definition, v.Movie) && IsDue(definition, v, FindRecord(records, v), now))
                 .ToList();
 
-            if (stale.Empty() && due.Empty())
+            foreach (var record in stale)
+            {
+                TryInPlex(definition, () => TakeOffLabel(settings, record));
+            }
+
+            if (due.Empty())
             {
                 return;
             }
 
-            try
+            List<PlexSection> sections = null;
+
+            if (!TryInPlex(definition, () => sections = _plexServerProxy.GetMovieSections(settings) ?? new List<PlexSection>()))
             {
-                foreach (var record in stale)
-                {
-                    TakeOffLabel(settings, record);
-                }
-
-                var sections = due.Any() ? _plexServerProxy.GetMovieSections(settings) ?? new List<PlexSection>() : new List<PlexSection>();
-
-                foreach (var version in due)
-                {
-                    LabelVersion(definition, settings, version, FindRecord(records, version), sections, now);
-                }
+                return;
             }
-            catch (Exception ex)
+
+            // One version Plex can't take an edit for doesn't hold up the others
+            foreach (var version in due)
             {
-                Warn($"connection:{definition.Id}", ex, "Unable to label extra versions in Plex ({0}): {1}", definition.Name, ex.Message);
+                if (!TryInPlex(definition, () => LabelVersion(definition, settings, version, FindRecord(records, version), sections, now)))
+                {
+                    Missed(GetKey(definition, version), version, now);
+                }
             }
         }
 
@@ -395,16 +397,26 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             }
 
             // A label stays recorded until it's taken off, so it's tried again on the next run when Plex can't be reached
+            foreach (var record in applying)
+            {
+                TryInPlex(definition, () => TakeOffLabel(settings, record));
+            }
+        }
+
+        // False after logging what went wrong, as a warning at most hourly for each connection
+        private bool TryInPlex(NotificationDefinition definition, Action action)
+        {
             try
             {
-                foreach (var record in applying)
-                {
-                    TakeOffLabel(settings, record);
-                }
+                action();
+
+                return true;
             }
             catch (Exception ex)
             {
-                Warn($"connection:{definition.Id}", ex, "Unable to take version labels off in Plex ({0}): {1}", definition.Name, ex.Message);
+                Warn($"connection:{definition.Id}", ex, "Unable to update version labels in Plex ({0}): {1}", definition.Name, ex.Message);
+
+                return false;
             }
         }
 
