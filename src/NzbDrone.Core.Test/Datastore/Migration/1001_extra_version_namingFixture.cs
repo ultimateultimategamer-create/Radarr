@@ -16,6 +16,8 @@ namespace NzbDrone.Core.Test.Datastore.Migration
                 c.Insert.IntoTable("NamingConfig").Row(new
                 {
                     RenameMovies = true,
+                    ReplaceIllegalCharacters = true,
+                    ColonReplacementFormat = 4,
                     StandardMovieFormat = "{Movie Title} ({Release Year}) {Quality Full}",
                     MovieFolderFormat = "{Movie Title} ({Release Year})"
                 });
