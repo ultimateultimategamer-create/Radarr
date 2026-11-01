@@ -6,6 +6,7 @@ on:
       - multi-version
       - codex/named-movie-versions
       - pinned-versions
+      - plex-editions
   pull_request:
     branches:
       - multi-version
@@ -65,7 +66,7 @@ jobs:
         run: |
           # The full suite runs in Release, matching upstream. Debug additionally checks version behavior and host wiring.
           FILTER="Category!=ManualTest&Category!=WINDOWS&Category!=IntegrationTest&Category!=AutomationTest"
-          VERSION_FILTER="FullyQualifiedName~MovieVersion|FullyQualifiedName~Versions|FullyQualifiedName~DownloadDecisionMaker|FullyQualifiedName~PendingReleaseServiceTests|FullyQualifiedName~DiskScanServiceTests|FullyQualifiedName~ImportApprovedMoviesFixture|FullyQualifiedName~ManualImportServiceFixture|FullyQualifiedName~NzbDrone.App.Test|FullyQualifiedName~NzbDrone.Host.Test|FullyQualifiedName~NzbDrone.Api.Test"
+          VERSION_FILTER="FullyQualifiedName~MovieVersion|FullyQualifiedName~Versions|FullyQualifiedName~DownloadDecisionMaker|FullyQualifiedName~PendingReleaseServiceTests|FullyQualifiedName~DiskScanServiceTests|FullyQualifiedName~ImportApprovedMoviesFixture|FullyQualifiedName~ManualImportServiceFixture|FullyQualifiedName~NzbDrone.App.Test|FullyQualifiedName~NzbDrone.Host.Test|FullyQualifiedName~NzbDrone.Api.Test|FullyQualifiedName~PlexVersionLabel|FullyQualifiedName~extra_version_naming"
           ASSEMBLIES=()
           for name in Radarr.Core.Test Radarr.Api.Test Radarr.Host.Test; do
             dll=$(find _tests -name "$name.dll" -not -path "*/ref/*" | head -1)
@@ -120,8 +121,8 @@ jobs:
 
   windows-package:
     name: Windows x64 package
-    # A runnable Radarr for Windows (backend and UI) to try the pinned-versions branch on a PC
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/pinned-versions'
+    # A runnable Radarr for Windows (backend and UI) to try the pinned-versions or plex-editions branch on a PC
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/pinned-versions' || github.ref == 'refs/heads/plex-editions'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -161,6 +162,6 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: Radarr-pinned-versions-windows-x64
+          name: ${{ github.ref == 'refs/heads/plex-editions' && 'Radarr-plex-editions-windows-x64' || 'Radarr-pinned-versions-windows-x64' }}
           path: _artifacts/win-x64/net10.0
           retention-days: 30

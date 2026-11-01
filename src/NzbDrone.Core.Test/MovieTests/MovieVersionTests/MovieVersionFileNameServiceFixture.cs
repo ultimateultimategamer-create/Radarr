@@ -4,6 +4,7 @@ using NUnit.Framework;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Movies;
 using NzbDrone.Core.Movies.Versions;
+using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Test.Framework;
 
@@ -105,12 +106,54 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
             Subject.GetUniqueFileName(_versionView, new MovieFile(), "MOVIE (2020)").Should().Be("MOVIE (2020) - HD-1080p");
         }
 
+        private void GivenExtraVersionNaming(ExtraVersionNaming naming)
+        {
+            Mocker.GetMock<INamingConfigService>()
+                  .Setup(s => s.GetConfig())
+                  .Returns(new NamingConfig { ExtraVersionNaming = naming });
+        }
+
+        private Movie GivenVersionView(string name)
+        {
+            return _movie.ForVersion(new MovieVersion { Id = 7, MovieId = 5, Name = name, QualityProfileId = 1, Path = _movie.Path, Pinned = true });
+        }
+
         [Test]
         public void should_name_additional_version_files_after_the_folder_and_the_version()
         {
-            var view = _movie.ForVersion(new MovieVersion { Id = 7, MovieId = 5, Name = "Director's Cut", QualityProfileId = 1, Path = _movie.Path, Pinned = true });
+            GivenExtraVersionNaming(ExtraVersionNaming.Label);
 
-            Subject.GetFileName(view, new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) - Director's Cut");
+            Subject.GetFileName(GivenVersionView("Director's Cut"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) - Director's Cut");
+        }
+
+        [Test]
+        public void should_name_additional_version_files_as_plex_editions()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+
+            Subject.GetFileName(GivenVersionView("Director's Cut"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-Director's Cut}");
+        }
+
+        [Test]
+        public void should_name_additional_version_files_as_plex_editions_by_default()
+        {
+            Subject.GetFileName(GivenVersionView("IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX}");
+        }
+
+        [Test]
+        public void should_leave_braces_out_of_the_edition()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+
+            Subject.GetFileName(GivenVersionView("Cut {Final}"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-Cut Final}");
+        }
+
+        [Test]
+        public void should_keep_the_naming_format_for_the_primary_version_named_as_plex_editions()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+
+            Subject.GetFileName(_movie, _primaryFile, "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) Bluray-1080p");
         }
 
         [Test]

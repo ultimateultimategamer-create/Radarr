@@ -23,18 +23,23 @@ namespace NzbDrone.Core.Movies.Versions
         private readonly IMovieVersionService _movieVersionService;
         private readonly IMediaFileRepository _mediaFileRepository;
         private readonly IQualityProfileRepository _qualityProfileRepository;
+        private readonly INamingConfigService _namingConfigService;
 
         public MovieVersionFileNameService(IMovieVersionService movieVersionService,
                                            IMediaFileRepository mediaFileRepository,
-                                           IQualityProfileRepository qualityProfileRepository)
+                                           IQualityProfileRepository qualityProfileRepository,
+                                           INamingConfigService namingConfigService)
         {
             _movieVersionService = movieVersionService;
             _mediaFileRepository = mediaFileRepository;
             _qualityProfileRepository = qualityProfileRepository;
+            _namingConfigService = namingConfigService;
         }
 
-        // Files of additional versions are named after the movie's folder and the version, "Movie (2020) - Director's Cut",
-        // the naming Plex, Jellyfin and Emby expect for versions of one movie. The primary version keeps the naming format.
+        // Files of additional versions are named after the movie's folder and the version. As Plex editions,
+        // "Movie (2020) {edition-Director's Cut}", each version is an item of its own in Plex. With labels,
+        // "Movie (2020) - Director's Cut", Plex shows the versions as one movie, and Jellyfin and Emby label them.
+        // The primary version keeps the naming format.
         public string GetFileName(Movie movie, MovieFile movieFile, string standardFileName)
         {
             var fileName = standardFileName;
@@ -46,7 +51,12 @@ namespace NzbDrone.Core.Movies.Versions
 
                 if (folderName.IsNotNullOrWhiteSpace() && versionName.IsNotNullOrWhiteSpace())
                 {
-                    fileName = $"{folderName} - {versionName}";
+                    // Braces would end Plex's edition tag early
+                    var editionName = versionName.Replace("{", string.Empty).Replace("}", string.Empty).Trim();
+
+                    fileName = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition && editionName.IsNotNullOrWhiteSpace()
+                        ? $"{folderName} {{edition-{editionName}}}"
+                        : $"{folderName} - {versionName}";
                 }
             }
 
@@ -101,6 +111,11 @@ namespace NzbDrone.Core.Movies.Versions
             }
 
             return uniqueName;
+        }
+
+        private ExtraVersionNaming GetExtraVersionNaming()
+        {
+            return _namingConfigService.GetConfig()?.ExtraVersionNaming ?? NamingConfig.Default.ExtraVersionNaming;
         }
 
         private static string RemoveExtension(string relativePath)

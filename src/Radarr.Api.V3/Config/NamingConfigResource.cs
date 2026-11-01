@@ -10,5 +10,8 @@ namespace Radarr.Api.V3.Config
         public ColonReplacementFormat ColonReplacementFormat { get; set; }
         public string StandardMovieFormat { get; set; }
         public string MovieFolderFormat { get; set; }
+
+        // Left out by clients that predate it: the saved setting is kept
+        public ExtraVersionNaming? ExtraVersionNaming { get; set; }
     }
 }
