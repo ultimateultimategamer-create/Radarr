@@ -20,7 +20,8 @@ namespace Radarr.Api.V3.Config
                 ReplaceIllegalCharacters = model.ReplaceIllegalCharacters,
                 ColonReplacementFormat = model.ColonReplacementFormat,
                 StandardMovieFormat = model.StandardMovieFormat,
-                MovieFolderFormat = model.MovieFolderFormat
+                MovieFolderFormat = model.MovieFolderFormat,
+                ExtraVersionNaming = model.ExtraVersionNaming
             };
         }
 
@@ -35,6 +36,7 @@ namespace Radarr.Api.V3.Config
                 ColonReplacementFormat = resource.ColonReplacementFormat,
                 StandardMovieFormat = resource.StandardMovieFormat,
                 MovieFolderFormat = resource.MovieFolderFormat,
+                ExtraVersionNaming = resource.ExtraVersionNaming ?? NamingConfig.Default.ExtraVersionNaming,
             };
         }
     }

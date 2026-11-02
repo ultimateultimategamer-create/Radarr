@@ -26,6 +26,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             Host = "";
             Port = 32400;
             UpdateLibrary = true;
+            LabelVersions = true;
             SignIn = "startOAuth";
         }
 
@@ -64,6 +65,9 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         [FieldDefinition(9, Label = "NotificationsSettingsUpdateMapPathsTo", Type = FieldType.Textbox, Advanced = true, HelpText = "NotificationsSettingsUpdateMapPathsToMovieHelpText")]
         [FieldToken(TokenField.HelpText, "NotificationsSettingsUpdateMapPathsTo", "serviceName", "Plex")]
         public string MapTo { get; set; }
+
+        [FieldDefinition(10, Label = "NotificationsPlexSettingsLabelVersions", Type = FieldType.Checkbox, HelpText = "NotificationsPlexSettingsLabelVersionsHelpText")]
+        public bool LabelVersions { get; set; }
 
         public bool IsValid => !string.IsNullOrWhiteSpace(Host);
 

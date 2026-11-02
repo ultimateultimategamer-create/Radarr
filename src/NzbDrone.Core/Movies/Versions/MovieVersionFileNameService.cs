@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NzbDrone.Common.Disk;
@@ -23,18 +24,23 @@ namespace NzbDrone.Core.Movies.Versions
         private readonly IMovieVersionService _movieVersionService;
         private readonly IMediaFileRepository _mediaFileRepository;
         private readonly IQualityProfileRepository _qualityProfileRepository;
+        private readonly INamingConfigService _namingConfigService;
 
         public MovieVersionFileNameService(IMovieVersionService movieVersionService,
                                            IMediaFileRepository mediaFileRepository,
-                                           IQualityProfileRepository qualityProfileRepository)
+                                           IQualityProfileRepository qualityProfileRepository,
+                                           INamingConfigService namingConfigService)
         {
             _movieVersionService = movieVersionService;
             _mediaFileRepository = mediaFileRepository;
             _qualityProfileRepository = qualityProfileRepository;
+            _namingConfigService = namingConfigService;
         }
 
-        // Files of additional versions are named after the movie's folder and the version, "Movie (2020) - Director's Cut",
-        // the naming Plex, Jellyfin and Emby expect for versions of one movie. The primary version keeps the naming format.
+        // Files of additional versions are named after the movie's folder and the version. As Plex editions,
+        // "Movie (2020) {edition-Director's Cut}", each version is an item of its own in Plex. With labels,
+        // "Movie (2020) - Director's Cut", Plex shows the versions as one movie, and Jellyfin and Emby label them.
+        // The primary version keeps the naming format.
         public string GetFileName(Movie movie, MovieFile movieFile, string standardFileName)
         {
             var fileName = standardFileName;
@@ -46,7 +52,14 @@ namespace NzbDrone.Core.Movies.Versions
 
                 if (folderName.IsNotNullOrWhiteSpace() && versionName.IsNotNullOrWhiteSpace())
                 {
-                    fileName = $"{folderName} - {versionName}";
+                    var edition = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition ? GetEdition(movie) : string.Empty;
+
+                    // An edition in the folder's name would be read as the file's, so it's left out of the file's name
+                    var editionBaseName = MovieVersionEditionName.RemoveFromName(folderName);
+
+                    fileName = edition.IsNotNullOrWhiteSpace() && editionBaseName.IsNotNullOrWhiteSpace()
+                        ? $"{editionBaseName} {{edition-{edition}}}"
+                        : $"{folderName} - {versionName}";
                 }
             }
 
@@ -101,6 +114,46 @@ namespace NzbDrone.Core.Movies.Versions
             }
 
             return uniqueName;
+        }
+
+        // A version keeps the edition it was handed, unless another version, another version's file or the movie's folder has
+        // it. A new one avoids those of the movie's other versions and files and the folder's, so no two versions share an
+        // edition in Plex. Plex counts an edition in the folder's name for every file in it without one of its own, like the
+        // primary version's.
+        private string GetEdition(Movie versionView)
+        {
+            var version = versionView.Version;
+            var versions = _movieVersionService.GetByMovieId(versionView.Id) ?? new List<MovieVersion>();
+            var extraVersionIds = versions.OrderBy(v => v.Id).Skip(1).Select(v => v.Id).ToList();
+            var files = _mediaFileRepository.GetFilesByMovie(versionView.Id) ?? new List<MovieFile>();
+            var folderEdition = MovieVersionEditionName.FromFileName(new OsPath(versionView.Path).FileName);
+
+            var taken = versions
+                .Where(v => v.Id != version.Id)
+                .Select(v => v.Edition)
+                .Concat(files.Where(f => f.GetVersionId(extraVersionIds) != version.Id).Select(f => MovieVersionEditionName.FromFileName(f.RelativePath)))
+                .Append(folderEdition)
+                .Where(e => e.IsNotNullOrWhiteSpace())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (version.Edition.IsNotNullOrWhiteSpace() && !taken.Contains(version.Edition))
+            {
+                return version.Edition;
+            }
+
+            var edition = MovieVersionEditionName.Allocate(version.Name, taken);
+
+            if (edition.IsNotNullOrWhiteSpace() && version.Id > 0)
+            {
+                _movieVersionService.SetEdition(version, edition);
+            }
+
+            return edition;
+        }
+
+        private ExtraVersionNaming GetExtraVersionNaming()
+        {
+            return _namingConfigService.GetConfig()?.ExtraVersionNaming ?? NamingConfig.Default.ExtraVersionNaming;
         }
 
         private static string RemoveExtension(string relativePath)

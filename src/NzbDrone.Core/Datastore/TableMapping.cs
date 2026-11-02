@@ -34,6 +34,7 @@ using NzbDrone.Core.Movies.Credits;
 using NzbDrone.Core.Movies.Translations;
 using NzbDrone.Core.Movies.Versions;
 using NzbDrone.Core.Notifications;
+using NzbDrone.Core.Notifications.Plex.Server;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles;
@@ -124,6 +125,8 @@ namespace NzbDrone.Core.Datastore
                   .HasOne(a => a.MovieMetadata, a => a.MovieMetadataId);
 
             Mapper.Entity<MovieVersion>("MovieVersions").RegisterModel();
+
+            Mapper.Entity<PlexVersionLabel>("PlexVersionLabels").RegisterModel();
 
             Mapper.Entity<ImportListMovie>("ImportListMovies").RegisterModel()
                   .Ignore(s => s.Title)

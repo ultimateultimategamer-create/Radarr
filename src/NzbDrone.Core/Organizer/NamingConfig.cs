@@ -11,6 +11,7 @@ namespace NzbDrone.Core.Organizer
             ColonReplacementFormat = ColonReplacementFormat.Smart,
             MovieFolderFormat = "{Movie Title} ({Release Year})",
             StandardMovieFormat = "{Movie Title} ({Release Year}) {Quality Full}",
+            ExtraVersionNaming = ExtraVersionNaming.PlexEdition,
         };
 
         public bool RenameMovies { get; set; }
@@ -18,5 +19,6 @@ namespace NzbDrone.Core.Organizer
         public ColonReplacementFormat ColonReplacementFormat { get; set; }
         public string StandardMovieFormat { get; set; }
         public string MovieFolderFormat { get; set; }
+        public ExtraVersionNaming ExtraVersionNaming { get; set; }
     }
 }

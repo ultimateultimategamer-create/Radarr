@@ -127,6 +127,19 @@ function Naming() {
     },
   ];
 
+  const extraVersionNamingOptions = [
+    {
+      key: 'plexEdition',
+      value: translate('ExtraVersionNamingPlexEdition'),
+      hint: 'Movie (2020) {edition-IMAX}',
+    },
+    {
+      key: 'label',
+      value: translate('ExtraVersionNamingLabel'),
+      hint: 'Movie (2020) - IMAX',
+    },
+  ];
+
   const standardMovieFormatHelpTexts = [];
   const standardMovieFormatErrors = [];
   const movieFolderFormatHelpTexts = [];
@@ -256,6 +269,20 @@ function Naming() {
                 ...movieFolderFormatErrors,
                 ...settings.movieFolderFormat.errors,
               ]}
+            />
+          </FormGroup>
+
+          <FormGroup size={sizes.MEDIUM}>
+            <FormLabel>{translate('ExtraVersionNaming')}</FormLabel>
+
+            <FormInputGroup
+              type={inputTypes.SELECT}
+              name="extraVersionNaming"
+              values={extraVersionNamingOptions}
+              helpText={translate('ExtraVersionNamingHelpText')}
+              helpTextWarning={translate('ExtraVersionNamingHelpTextWarning')}
+              onChange={handleInputChange}
+              {...settings.extraVersionNaming}
             />
           </FormGroup>
 

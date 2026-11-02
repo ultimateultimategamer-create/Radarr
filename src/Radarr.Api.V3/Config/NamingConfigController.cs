@@ -48,6 +48,8 @@ namespace Radarr.Api.V3.Config
         [Consumes("application/json")]
         public Results<Accepted<NamingConfigResource>, NotFound> UpdateNamingConfig([FromBody] NamingConfigResource resource)
         {
+            resource.ExtraVersionNaming ??= _namingConfigService.GetConfig().ExtraVersionNaming;
+
             var nameSpec = resource.ToModel();
             ValidateFormatResult(nameSpec);
 
