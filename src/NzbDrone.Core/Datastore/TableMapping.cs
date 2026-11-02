@@ -128,6 +128,8 @@ namespace NzbDrone.Core.Datastore
 
             Mapper.Entity<PlexVersionLabel>("PlexVersionLabels").RegisterModel();
 
+            Mapper.Entity<PlexVersionLabelLegacy>("PlexVersionLabelsLegacy").RegisterModel();
+
             Mapper.Entity<ImportListMovie>("ImportListMovies").RegisterModel()
                   .Ignore(s => s.Title)
                   .Ignore(s => s.Year)

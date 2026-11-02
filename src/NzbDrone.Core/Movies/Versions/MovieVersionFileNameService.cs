@@ -54,8 +54,11 @@ namespace NzbDrone.Core.Movies.Versions
                 {
                     var edition = GetExtraVersionNaming() == ExtraVersionNaming.PlexEdition ? GetEdition(movie) : string.Empty;
 
-                    fileName = edition.IsNotNullOrWhiteSpace()
-                        ? $"{folderName} {{edition-{edition}}}"
+                    // An edition in the folder's name would be read as the file's, so it's left out of the file's name
+                    var editionBaseName = MovieVersionEditionName.RemoveFromName(folderName);
+
+                    fileName = edition.IsNotNullOrWhiteSpace() && editionBaseName.IsNotNullOrWhiteSpace()
+                        ? $"{editionBaseName} {{edition-{edition}}}"
                         : $"{folderName} - {versionName}";
                 }
             }

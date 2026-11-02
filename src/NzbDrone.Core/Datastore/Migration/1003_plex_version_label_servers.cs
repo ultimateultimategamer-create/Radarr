@@ -12,8 +12,8 @@ namespace NzbDrone.Core.Datastore.Migration
             Alter.Table("MovieVersions").AddColumn("Edition").AsString().Nullable();
 
             // Labels are kept for a Plex server and item now, not for a connection. Labels recorded by 1002 can't be tied to
-            // a server safely, and only builds that never shipped made them, so the table is created anew.
-            Delete.Table("PlexVersionLabels");
+            // a server, so they're kept apart, and Radarr takes them off through the connection that added them.
+            Rename.Table("PlexVersionLabels").To("PlexVersionLabelsLegacy");
 
             Create.TableForModel("PlexVersionLabels")
                 .WithColumn("ServerId").AsString().Indexed()

@@ -89,5 +89,14 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         {
             MovieVersionEditionName.FromFileName(fileName).Should().Be(edition);
         }
+
+        [TestCase("Movie (2020) {edition-Theatrical}", "Movie (2020)")]
+        [TestCase("Movie {Edition-Theatrical} (2020)", "Movie (2020)")]
+        [TestCase("Movie (2020)", "Movie (2020)")]
+        [TestCase("{edition-Theatrical}", "")]
+        public void should_take_editions_out_of_a_name(string name, string withoutEditions)
+        {
+            MovieVersionEditionName.RemoveFromName(name).Should().Be(withoutEditions);
+        }
     }
 }

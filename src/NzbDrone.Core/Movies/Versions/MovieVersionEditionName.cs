@@ -16,6 +16,7 @@ namespace NzbDrone.Core.Movies.Versions
         public const int MaxLength = 32;
 
         private static readonly Regex EditionTagRegex = new Regex(@"\{edition-(?<edition>[^{}]+)\}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MultipleSpacesRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
 
         // Empty when the name has nothing usable
         public static string Allocate(string name, IEnumerable<string> taken)
@@ -60,6 +61,11 @@ namespace NzbDrone.Core.Movies.Versions
             var match = EditionTagRegex.Match(fileName);
 
             return match.Success ? match.Groups["edition"].Value.Trim() : string.Empty;
+        }
+
+        public static string RemoveFromName(string name)
+        {
+            return name.IsNullOrWhiteSpace() ? name : MultipleSpacesRegex.Replace(EditionTagRegex.Replace(name, " "), " ").Trim();
         }
 
         // Whole characters only, so a cut never splits one, like an emoji's surrogate pair or a letter and its accent

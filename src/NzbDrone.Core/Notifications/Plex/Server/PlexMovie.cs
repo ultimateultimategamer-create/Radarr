@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
+using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Notifications.Plex.Server
 {
@@ -52,6 +53,15 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         // Fields locked against metadata refreshes, as edited by hand
         [JsonProperty("Field")]
         public List<PlexMovieField> Fields { get; set; }
+
+        // Plex reported every part of every media of the item with its file: only then is it known which files it holds
+        public bool IsComplete()
+        {
+            var media = Media ?? new List<PlexMovieMedia>();
+
+            return media.Any() &&
+                   media.All(m => m?.Parts != null && m.Parts.Any() && m.Parts.All(p => p != null && p.File.IsNotNullOrWhiteSpace()));
+        }
 
         public List<string> GetFiles()
         {

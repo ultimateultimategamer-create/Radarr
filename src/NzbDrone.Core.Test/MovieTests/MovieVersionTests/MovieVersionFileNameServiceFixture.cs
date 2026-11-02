@@ -219,6 +219,15 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_leave_an_edition_in_the_folder_name_out_of_the_file_name()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+            _movie.Path = "/Movies/Movie (2020) {edition-Theatrical}";
+
+            Subject.GetFileName(GivenVersionView("IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX}");
+        }
+
+        [Test]
         public void should_leave_braces_out_of_the_edition()
         {
             GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
