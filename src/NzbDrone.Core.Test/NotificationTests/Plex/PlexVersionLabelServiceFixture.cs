@@ -47,6 +47,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         public void Setup()
         {
             _settings = new PlexServerSettings { Host = "127.0.0.1", Port = 32400, LabelVersions = true };
+
             // No notification event is on: labels have a setting of their own
             _definition = new NotificationDefinition { Id = 3, Name = "Plex", Settings = _settings };
             _definitions = new List<NotificationDefinition> { _definition };
