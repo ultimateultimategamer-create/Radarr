@@ -1367,7 +1367,7 @@
   "NotificationsPlexSettingsAuthToken": "Auth Token",
   "NotificationsPlexSettingsAuthenticateWithPlexTv": "Authenticate with Plex.tv",
   "NotificationsPlexSettingsLabelVersions": "Label Extra Versions",
-  "NotificationsPlexSettingsLabelVersionsHelpText": "Add the version's name to the end of each extra version's title in Plex, like Movie (IMAX). Only titles are edited, and turning this off restores the ones {appName} changed. Needs extra versions named as Plex editions (Settings > Media Management)",
+  "NotificationsPlexSettingsLabelVersionsHelpText": "Add the version's name to the end of each extra version's title in Plex, like Movie (IMAX). Only titles are edited, and turning this off restores the ones {appName} changed. Works even with no notification events on. Needs extra versions named as Plex editions (Settings > Media Management)",
   "NotificationsPlexSettingsServer": "Server",
   "NotificationsPlexSettingsServerHelpText": "Select server from plex.tv account after authenticating",
   "NotificationsPlexValidationNoMovieLibraryFound": "At least one Movie library is required",

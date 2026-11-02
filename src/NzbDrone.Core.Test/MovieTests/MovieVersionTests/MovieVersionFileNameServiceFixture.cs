@@ -228,6 +228,25 @@ namespace NzbDrone.Core.Test.MovieTests.MovieVersionTests
         }
 
         [Test]
+        public void should_not_hand_out_the_edition_of_the_movie_folder()
+        {
+            // The primary file has no edition of its own, so Plex counts the folder's for it
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+            _movie.Path = "/Movies/Movie (2020) {edition-IMAX}";
+
+            Subject.GetFileName(GivenVersionView("IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX 2}");
+        }
+
+        [Test]
+        public void should_hand_out_a_new_edition_when_the_movie_folder_has_the_one_kept()
+        {
+            GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);
+            _movie.Path = "/Movies/Movie (2020) {edition-IMAX}";
+
+            Subject.GetFileName(GivenVersionView("IMAX", "IMAX"), new MovieFile(), "Movie (2020) Bluray-1080p").Should().Be("Movie (2020) {edition-IMAX 2}");
+        }
+
+        [Test]
         public void should_leave_braces_out_of_the_edition()
         {
             GivenExtraVersionNaming(ExtraVersionNaming.PlexEdition);

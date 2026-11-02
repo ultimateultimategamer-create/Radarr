@@ -29,7 +29,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
         private PlexServerSettings _settings;
         private NotificationDefinition _definition;
-        private List<INotification> _connections;
+        private List<NotificationDefinition> _definitions;
         private Movie _movie;
         private MovieVersion _version;
         private List<MovieVersion> _versions;
@@ -41,19 +41,19 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         private List<PlexSection> _sections;
         private string _serverId;
         private List<PlexVersionLabel> _records;
-        private List<PlexVersionLabelLegacy> _legacyRecords;
         private bool _failNextUpdate;
 
         [SetUp]
         public void Setup()
         {
             _settings = new PlexServerSettings { Host = "127.0.0.1", Port = 32400, LabelVersions = true };
+            // No notification event is on: labels have a setting of their own
             _definition = new NotificationDefinition { Id = 3, Name = "Plex", Settings = _settings };
-            _connections = new List<INotification> { GivenConnection(_definition) };
+            _definitions = new List<NotificationDefinition> { _definition };
 
             Mocker.GetMock<INotificationFactory>()
-                  .Setup(s => s.GetAvailableProviders())
-                  .Returns(() => _connections.ToList());
+                  .Setup(s => s.All())
+                  .Returns(() => _definitions.ToList());
 
             _movie = new Movie
             {
@@ -145,16 +145,6 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             repository.Setup(s => s.Delete(It.IsAny<int>()))
                       .Callback<int>(id => _records.RemoveAll(r => r.Id == id));
-
-            _legacyRecords = new List<PlexVersionLabelLegacy>();
-
-            var legacyRepository = Mocker.GetMock<IPlexVersionLabelLegacyRepository>();
-
-            legacyRepository.Setup(s => s.All())
-                            .Returns(() => _legacyRecords.ToList());
-
-            legacyRepository.Setup(s => s.Delete(It.IsAny<int>()))
-                            .Callback<int>(id => _legacyRecords.RemoveAll(r => r.Id == id));
         }
 
         private static PlexVersionLabel Copy(PlexVersionLabel record)
@@ -176,14 +166,6 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
                 OriginalTitleLocked = record.OriginalTitleLocked,
                 LastChecked = record.LastChecked
             };
-        }
-
-        private static INotification GivenConnection(NotificationDefinition definition)
-        {
-            var notification = new Mock<INotification>();
-            notification.SetupGet(n => n.Definition).Returns(definition);
-
-            return notification.Object;
         }
 
         private static PlexMovie GivenPlexMovie(string ratingKey, string title, string edition, params string[] files)
@@ -263,7 +245,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         private PlexServerSettings GivenSecondConnection()
         {
             var otherSettings = new PlexServerSettings { Host = "plex.local", Port = 32400, LabelVersions = true };
-            _connections.Add(GivenConnection(new NotificationDefinition { Id = 4, Name = "Plex too", Settings = otherSettings }));
+            _definitions.Add(new NotificationDefinition { Id = 4, Name = "Plex too", Settings = otherSettings });
 
             return otherSettings;
         }
@@ -278,31 +260,6 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
             proxy.Setup(s => s.GetMovies(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(), It.Is<PlexServerSettings>(c => c == settings))).Throws(refused);
             proxy.Setup(s => s.GetMovie(It.IsAny<string>(), It.Is<PlexServerSettings>(c => c == settings))).Throws(refused);
             proxy.Setup(s => s.EditMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<Dictionary<string, string>>(), It.Is<PlexServerSettings>(c => c == settings))).Throws(refused);
-        }
-
-        // As an earlier build labeled the edition item: its title and edition edited and locked
-        private void GivenLabeledByEarlierBuild()
-        {
-            _edition.Title = "Blade Runner (IMAX)";
-            Apply(_edition, new Dictionary<string, string> { { "title.locked", "1" }, { "editionTitle.locked", "1" } });
-
-            _legacyRecords.Add(new PlexVersionLabelLegacy
-            {
-                Id = 1,
-                NotificationId = 3,
-                MovieId = 5,
-                MovieVersionId = 7,
-                MovieFileId = 11,
-                Name = "IMAX",
-                SectionId = 1,
-                RatingKey = "101",
-                Title = "Blade Runner (IMAX)",
-                EditionTitle = "IMAX",
-                OriginalTitle = "Blade Runner",
-                OriginalTitleLocked = false,
-                OriginalEditionTitle = "IMAX",
-                OriginalEditionTitleLocked = false
-            });
         }
 
         private void GivenExtraVersionNaming(ExtraVersionNaming naming)
@@ -533,8 +490,7 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         [Test]
         public void should_keep_labels_another_connection_to_the_same_server_still_adds()
         {
-            var otherSettings = new PlexServerSettings { Host = "plex.local", Port = 32400, LabelVersions = true };
-            _connections.Add(GivenConnection(new NotificationDefinition { Id = 4, Name = "Plex too", Settings = otherSettings }));
+            GivenSecondConnection();
 
             Run();
 
@@ -1121,61 +1077,13 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
         }
 
         [Test]
-        public void should_take_off_labels_of_an_earlier_build()
+        public void should_label_and_take_labels_off_with_every_notification_event_off()
         {
-            GivenLabeledByEarlierBuild();
-            _settings.LabelVersions = false;
-
-            Run();
-
-            _edition.Title.Should().Be("Blade Runner");
-            _edition.IsLocked("title").Should().BeFalse();
-            _edition.EditionTitle.Should().Be("IMAX");
-            _edition.IsLocked("editionTitle").Should().BeFalse();
-            _legacyRecords.Should().BeEmpty();
-        }
-
-        [Test]
-        public void should_restore_an_edition_an_earlier_build_changed()
-        {
-            GivenLabeledByEarlierBuild();
-            _edition.EditionTitle = "IMAX Enhanced";
-            _legacyRecords[0].EditionTitle = "IMAX Enhanced";
-            _settings.LabelVersions = false;
-
-            Run();
-
-            _edition.EditionTitle.Should().Be("IMAX");
-            _edition.IsLocked("editionTitle").Should().BeFalse();
-        }
-
-        [Test]
-        public void should_keep_a_title_changed_since_an_earlier_build_labeled_it()
-        {
-            GivenLabeledByEarlierBuild();
-            _edition.Title = "Blade Runner: The IMAX Cut";
-            _settings.LabelVersions = false;
-
-            Run();
-
-            _edition.Title.Should().Be("Blade Runner: The IMAX Cut");
-            _edition.IsLocked("title").Should().BeTrue();
-            _edition.IsLocked("editionTitle").Should().BeFalse();
-            _legacyRecords.Should().BeEmpty();
-        }
-
-        [Test]
-        public void should_label_an_item_once_the_label_of_an_earlier_build_is_off()
-        {
-            GivenLabeledByEarlierBuild();
+            _definition.Enable.Should().BeFalse();
 
             Run();
 
             _edition.Title.Should().Be("Blade Runner (IMAX)");
-            _legacyRecords.Should().BeEmpty();
-            _records.Should().ContainSingle();
-            _records[0].OriginalTitle.Should().Be("Blade Runner");
-            _records[0].Title.Should().Be("Blade Runner (IMAX)");
 
             _settings.LabelVersions = false;
 
@@ -1183,45 +1091,44 @@ namespace NzbDrone.Core.Test.NotificationTests.Plex
 
             _edition.Title.Should().Be("Blade Runner");
             _edition.IsLocked("title").Should().BeFalse();
+
+            Mocker.GetMock<INotificationFactory>()
+                  .Verify(v => v.GetAvailableProviders(), Times.Never());
         }
 
         [Test]
-        public void should_not_label_an_item_while_the_label_of_an_earlier_build_cannot_come_off()
+        public void should_not_label_a_labeled_item_again_when_plex_fails_to_answer_for_it_once()
         {
-            GivenLabeledByEarlierBuild();
-            GivenSecondConnection();
-            GivenLibraryRefused(_settings);
-
             Run();
 
-            _records.Should().BeEmpty();
-            _legacyRecords.Should().ContainSingle();
-            ExceptionVerification.ExpectedWarns(1);
+            // On the daily check Plex fails to answer for the labeled item once, then answers again
+            GivenLabelsCheckedLongAgo();
+            var reads = 0;
 
-            GivenPlexReachable();
             Mocker.GetMock<IPlexServerProxy>()
-                  .Setup(s => s.EditMovie(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<Dictionary<string, string>>(), It.IsAny<PlexServerSettings>()))
-                  .Callback<int, string, Dictionary<string, string>, PlexServerSettings>((sectionId, ratingKey, fields, settings) => Apply(_plexItems.Single(i => i.RatingKey == ratingKey), fields));
+                  .Setup(s => s.GetMovie("101", It.IsAny<PlexServerSettings>()))
+                  .Returns<string, PlexServerSettings>((ratingKey, settings) =>
+                  {
+                      if (reads++ == 0)
+                      {
+                          throw new PlexException("Unable to connect to Plex Media Server");
+                      }
+
+                      return _edition;
+                  });
 
             Run();
 
-            _legacyRecords.Should().BeEmpty();
+            ExceptionVerification.ExpectedWarns(1);
+            _records.Should().ContainSingle();
+
+            _version.Name = "IMAX Updated";
+
+            Run();
+
+            _edition.Title.Should().Be("Blade Runner (IMAX Updated)");
             _records.Should().ContainSingle();
             _records[0].OriginalTitle.Should().Be("Blade Runner");
-            _edition.Title.Should().Be("Blade Runner (IMAX)");
-        }
-
-        [Test]
-        public void should_keep_labels_of_an_earlier_build_until_their_connection_is_back()
-        {
-            GivenLabeledByEarlierBuild();
-            _legacyRecords[0].NotificationId = 9;
-            _settings.LabelVersions = false;
-
-            Run();
-
-            _edition.Title.Should().Be("Blade Runner (IMAX)");
-            _legacyRecords.Should().ContainSingle();
         }
     }
 }

@@ -27,10 +27,39 @@ namespace NzbDrone.Core.Test.Datastore.Migration
 
             naming.Should().ContainSingle().Which.ExtraVersionNaming.Should().Be(1);
         }
+
+        [Test]
+        public void should_add_an_empty_edition_to_existing_versions()
+        {
+            var db = WithMigrationTestDb(c =>
+            {
+                c.Insert.IntoTable("MovieVersions").Row(new
+                {
+                    MovieId = 1,
+                    Name = "IMAX",
+                    QualityProfileId = 1,
+                    RequiredCustomFormatIds = "[]",
+                    Pinned = true,
+                    MovieFileId = 0
+                });
+            });
+
+            var versions = db.Query<MovieVersion1001>("SELECT \"Name\", \"Edition\" FROM \"MovieVersions\"");
+
+            versions.Should().ContainSingle();
+            versions[0].Name.Should().Be("IMAX");
+            versions[0].Edition.Should().BeNull();
+        }
     }
 
     public class NamingConfig1001
     {
         public int ExtraVersionNaming { get; set; }
+    }
+
+    public class MovieVersion1001
+    {
+        public string Name { get; set; }
+        public string Edition { get; set; }
     }
 }

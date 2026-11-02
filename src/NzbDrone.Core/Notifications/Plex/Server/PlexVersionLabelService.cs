@@ -46,7 +46,6 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         private readonly IMediaFileService _mediaFileService;
         private readonly IPlexServerProxy _plexServerProxy;
         private readonly IPlexVersionLabelRepository _labelRepository;
-        private readonly IPlexVersionLabelLegacyRepository _legacyLabelRepository;
         private readonly Logger _logger;
 
         private readonly ConcurrentDictionary<string, Miss> _misses = new();
@@ -61,7 +60,6 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                                        IMediaFileService mediaFileService,
                                        IPlexServerProxy plexServerProxy,
                                        IPlexVersionLabelRepository labelRepository,
-                                       IPlexVersionLabelLegacyRepository legacyLabelRepository,
                                        Logger logger)
         {
             _notificationFactory = notificationFactory;
@@ -71,7 +69,6 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             _mediaFileService = mediaFileService;
             _plexServerProxy = plexServerProxy;
             _labelRepository = labelRepository;
-            _legacyLabelRepository = legacyLabelRepository;
             _logger = logger;
         }
 
@@ -84,9 +81,10 @@ namespace NzbDrone.Core.Notifications.Plex.Server
 
         public void Execute(LabelPlexVersionsCommand message)
         {
-            var connections = (_notificationFactory.GetAvailableProviders() ?? new List<INotification>())
-                .Select(n => n.Definition as NotificationDefinition)
-                .Where(d => d?.Settings is PlexServerSettings)
+            // Every Plex Media Server connection, whether or not any of its notification events are on: labels have a setting
+            // of their own
+            var connections = (_notificationFactory.All() ?? new List<NotificationDefinition>())
+                .Where(d => d?.Settings is PlexServerSettings && d.Settings.Validate().IsValid)
                 .ToList();
 
             if (connections.Empty())
@@ -97,10 +95,6 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             var namedAsEditions = (_namingConfigService.GetConfig()?.ExtraVersionNaming ?? NamingConfig.Default.ExtraVersionNaming) == ExtraVersionNaming.PlexEdition;
             var labelingIds = connections.Where(d => namedAsEditions && ((PlexServerSettings)d.Settings).LabelVersions).Select(d => d.Id).ToHashSet();
             var records = (_labelRepository.All() ?? Enumerable.Empty<PlexVersionLabel>()).ToList();
-            var legacyRecords = (_legacyLabelRepository.All() ?? Enumerable.Empty<PlexVersionLabelLegacy>()).ToList();
-
-            // Labels of an earlier build come off first, and no label is added to an item while one of those is still on it
-            var legacyLabeled = legacyRecords.Any() ? TakeOffLegacyLabels(connections, legacyRecords) : new HashSet<string>();
 
             // Without labels to add or take off, Plex isn't contacted at all
             if (labelingIds.Empty() && records.Empty())
@@ -149,7 +143,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
 
                 if (server.Labeling.Any())
                 {
-                    Label(server, library, serverRecords.Where(r => !takenOff.Contains(r.Id)).ToList(), legacyLabeled);
+                    Label(server, library, serverRecords.Where(r => !takenOff.Contains(r.Id)).ToList(), serverRecords.Select(r => r.RatingKey).ToHashSet());
                 }
             }
         }
@@ -356,7 +350,8 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             Forget(record);
         }
 
-        private void Label(Server server, Library library, List<PlexVersionLabel> records, HashSet<string> legacyLabeled)
+        // recordedItems: the rating keys of the server's items with a label recorded
+        private void Label(Server server, Library library, List<PlexVersionLabel> records, HashSet<string> recordedItems)
         {
             var now = DateTime.UtcNow;
 
@@ -380,13 +375,13 @@ namespace NzbDrone.Core.Notifications.Plex.Server
 
             foreach (var version in due)
             {
-                LabelVersion(server, version, RecordsOf(records, version), sections, legacyLabeled, now);
+                LabelVersion(server, version, RecordsOf(records, version), sections, recordedItems, now);
             }
         }
 
         // Every item of the version, in every library of the server. A label, library or item Plex fails on, like an item
         // whose edit Plex refuses, doesn't hold up the others, and the version is looked at again.
-        private void LabelVersion(Server server, VersionFile version, List<PlexVersionLabel> records, List<PlexSection> sections, HashSet<string> legacyLabeled, DateTime now)
+        private void LabelVersion(Server server, VersionFile version, List<PlexVersionLabel> records, List<PlexSection> sections, HashSet<string> recordedItems, DateTime now)
         {
             var key = $"server:{server.Id}";
             var items = new Dictionary<string, Candidate>();
@@ -418,8 +413,9 @@ namespace NzbDrone.Core.Notifications.Plex.Server
                     continue;
                 }
 
-                // Labeled by an earlier build, whose label comes off first
-                if (legacyLabeled.Contains(found.RatingKey))
+                // An item with a label recorded is only ever handled through that record, so a record Plex didn't answer for
+                // just now is never doubled with one that takes Radarr's label for a title someone wrote
+                if (recordedItems.Contains(found.RatingKey))
                 {
                     done = false;
 
@@ -668,64 +664,6 @@ namespace NzbDrone.Core.Notifications.Plex.Server
             _logger.Info("Took the label off '{0}' in Plex", item.Title);
 
             return RestoreResult.Restored;
-        }
-
-        // Labels recorded for a connection by an earlier build, which also edited and locked editions. Each is taken off
-        // through that connection, as that build would have, and then forgotten. The rating keys of those Plex failed on,
-        // to take off on the next run.
-        private HashSet<string> TakeOffLegacyLabels(List<NotificationDefinition> connections, List<PlexVersionLabelLegacy> legacyRecords)
-        {
-            var left = new HashSet<string>();
-
-            // The earliest label of an item has what the item had before any, so it's taken off first
-            foreach (var record in legacyRecords.OrderBy(r => r.Id))
-            {
-                var connection = connections.FirstOrDefault(c => c.Id == record.NotificationId);
-
-                // Kept until the connection that added it is available
-                if (connection == null)
-                {
-                    continue;
-                }
-
-                var settings = (PlexServerSettings)connection.Settings;
-
-                if (!TryInPlex($"connection:{connection.Id}", connection.Name, () => TakeOffLegacyLabel(settings, record)))
-                {
-                    left.Add(record.RatingKey);
-                }
-            }
-
-            return left;
-        }
-
-        // Restores what the item had, in each field that still has what that build wrote
-        private void TakeOffLegacyLabel(PlexServerSettings settings, PlexVersionLabelLegacy record)
-        {
-            var item = _plexServerProxy.GetMovie(record.RatingKey, settings);
-            var fields = new Dictionary<string, string>();
-
-            if (item != null && item.Title != null && item.Title == record.Title)
-            {
-                fields.Add("title.value", record.OriginalTitle ?? string.Empty);
-                fields.Add("title.locked", record.OriginalTitleLocked ? "1" : "0");
-            }
-
-            if (item != null &&
-                item.EditionTitle == record.EditionTitle &&
-                (record.EditionTitle != record.OriginalEditionTitle || !record.OriginalEditionTitleLocked))
-            {
-                fields.Add("editionTitle.value", record.OriginalEditionTitle ?? string.Empty);
-                fields.Add("editionTitle.locked", record.OriginalEditionTitleLocked ? "1" : "0");
-            }
-
-            if (fields.Any())
-            {
-                _plexServerProxy.EditMovie(record.SectionId, record.RatingKey, fields, settings);
-                _logger.Info("Took the label of an earlier build off '{0}' in Plex", item.Title);
-            }
-
-            _legacyLabelRepository.Delete(record.Id);
         }
 
         private void Forget(PlexVersionLabel record)

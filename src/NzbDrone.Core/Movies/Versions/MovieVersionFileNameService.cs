@@ -116,19 +116,23 @@ namespace NzbDrone.Core.Movies.Versions
             return uniqueName;
         }
 
-        // A version keeps the edition it was handed, unless another version or another version's file has it. A new one
-        // avoids those of the movie's other versions and files, so no two versions share an edition in Plex.
+        // A version keeps the edition it was handed, unless another version, another version's file or the movie's folder has
+        // it. A new one avoids those of the movie's other versions and files and the folder's, so no two versions share an
+        // edition in Plex. Plex counts an edition in the folder's name for every file in it without one of its own, like the
+        // primary version's.
         private string GetEdition(Movie versionView)
         {
             var version = versionView.Version;
             var versions = _movieVersionService.GetByMovieId(versionView.Id) ?? new List<MovieVersion>();
             var extraVersionIds = versions.OrderBy(v => v.Id).Skip(1).Select(v => v.Id).ToList();
             var files = _mediaFileRepository.GetFilesByMovie(versionView.Id) ?? new List<MovieFile>();
+            var folderEdition = MovieVersionEditionName.FromFileName(new OsPath(versionView.Path).FileName);
 
             var taken = versions
                 .Where(v => v.Id != version.Id)
                 .Select(v => v.Edition)
                 .Concat(files.Where(f => f.GetVersionId(extraVersionIds) != version.Id).Select(f => MovieVersionEditionName.FromFileName(f.RelativePath)))
+                .Append(folderEdition)
                 .Where(e => e.IsNotNullOrWhiteSpace())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
